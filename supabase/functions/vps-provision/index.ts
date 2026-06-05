@@ -167,10 +167,20 @@ async function recordEvent(
   });
 }
 
-const DEFAULT_INSTALL_URL = "https://raw.githubusercontent.com/jamrock/sync-api/main/install.sh";
+const DEFAULT_INSTALL_URL = "https://raw.githubusercontent.com/bzalk/jrp-supabase/main/scripts/hostinger-post-install.sh";
 
 function shellQuote(value: string): string {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
+}
+
+function syncApiHostForApex(apexDomain: string): string {
+  const root = apexDomain.trim().toLowerCase();
+  return root ? `sync-api.${root}` : "";
+}
+
+function syncApiUrlForApex(apexDomain: string): string {
+  const host = syncApiHostForApex(apexDomain);
+  return host ? `https://${host}` : "";
 }
 
 function buildPostInstallScript(
@@ -184,12 +194,15 @@ function buildPostInstallScript(
   },
 ): string {
   const url = installUrl || DEFAULT_INSTALL_URL;
+  const syncApiDomain = context.syncApiUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
   return [
     "#!/bin/bash",
     "set -euo pipefail",
     "exec > >(tee -a /var/log/sync-api-install.log) 2>&1",
     "export DEBIAN_FRONTEND=noninteractive",
     `export HOSTNAME=${shellQuote(context.hostname)}`,
+    `export BASE_DOMAIN=${shellQuote(context.apexDomain)}`,
+    `export SYNC_API_DOMAIN=${shellQuote(syncApiDomain)}`,
     `export SYNC_API_TOKEN=${shellQuote(context.syncApiToken)}`,
     `export SYNC_API_URL=${shellQuote(context.syncApiUrl)}`,
     `export APEX_DOMAIN=${shellQuote(context.apexDomain)}`,
@@ -474,7 +487,10 @@ async function handleStart(req: Request, user: AuthedUser): Promise<Response> {
     }
   }
 
-  const hostname = String(envRow.full_hostname || "");
+  const apexDomain = String(envRow.apex_domain || "");
+  if (!apexDomain) return jsonResponse({ error: "apex_domain is required" }, 400);
+  const hostname = String(envRow.full_hostname || apexDomain);
+  const syncApiUrl = syncApiUrlForApex(apexDomain);
   const rootPassword = generateRootPassword();
   const syncApiToken = generateSyncApiToken();
   const installUrl = cfg.syncApiInstallUrl || DEFAULT_INSTALL_URL;
@@ -488,15 +504,15 @@ async function handleStart(req: Request, user: AuthedUser): Promise<Response> {
   const postInstallScript = buildPostInstallScript(installUrl, {
     syncApiToken,
     hostname,
-    syncApiUrl: `https://${hostname}`,
-    apexDomain: String(envRow.apex_domain || ""),
+    syncApiUrl,
+    apexDomain,
     subdomain: String(envRow.subdomain || ""),
   });
 
   await user.client.from("local_environments").update({
     vps_status: "provisioning",
     sync_api_token: syncApiToken,
-    sync_api_url: `https://${hostname}`,
+    sync_api_url: syncApiUrl,
     vps_root_password: rootPassword,
     updated_at: new Date().toISOString(),
   }).eq("id", localEnvId);
@@ -735,7 +751,7 @@ async function handleResumeSetup(req: Request, user: AuthedUser): Promise<Respon
       }
       // state is "initial" or "installing" -- proceed with setup below
     }
-  } catch (_) {
+  } catch {
     // Non-fatal: if state check fails, we still attempt setup
   }
 
@@ -755,9 +771,12 @@ async function handleResumeSetup(req: Request, user: AuthedUser): Promise<Respon
     }
   }
 
-  const hostname = String(envRow.full_hostname || "");
+  const apexDomain = String(envRow.apex_domain || "");
+  if (!apexDomain) return jsonResponse({ error: "apex_domain is required" }, 400);
+  const hostname = String(envRow.full_hostname || apexDomain);
+  const syncApiUrl = syncApiUrlForApex(apexDomain);
   const rootPassword = generateRootPassword();
-  const syncApiToken = String(envRow.sync_api_token || "") || generateSyncApiToken();
+  const syncApiToken = generateSyncApiToken();
   const installUrl = cfg.syncApiInstallUrl || DEFAULT_INSTALL_URL;
 
   const urlCheck = await validateInstallUrl(installUrl);
@@ -768,15 +787,15 @@ async function handleResumeSetup(req: Request, user: AuthedUser): Promise<Respon
   const postInstallScript = buildPostInstallScript(installUrl, {
     syncApiToken,
     hostname,
-    syncApiUrl: `https://${hostname}`,
-    apexDomain: String(envRow.apex_domain || ""),
+    syncApiUrl,
+    apexDomain,
     subdomain: String(envRow.subdomain || ""),
   });
 
   await user.client.from("local_environments").update({
     vps_status: "provisioning",
     sync_api_token: syncApiToken,
-    sync_api_url: `https://${hostname}`,
+    sync_api_url: syncApiUrl,
     vps_root_password: rootPassword,
     updated_at: new Date().toISOString(),
   }).eq("id", localEnvId);
@@ -904,15 +923,18 @@ async function handleRecreate(req: Request, user: AuthedUser): Promise<Response>
   }
 
   const scriptUrl = (body.post_install_script_url || "").trim();
-  const hostname = String(envRow.full_hostname || "");
   const apexDomain = String(envRow.apex_domain || "");
-  const syncApiToken = String(envRow.sync_api_token || "") || generateSyncApiToken();
+  if (!apexDomain) return jsonResponse({ error: "apex_domain is required" }, 400);
+  const hostname = String(envRow.full_hostname || apexDomain);
+  const syncApiUrl = syncApiUrlForApex(apexDomain);
+  const syncApiToken = generateSyncApiToken();
 
   await user.client.from("local_environments").update({
     vps_status: "provisioning",
     post_install_script_url: scriptUrl || null,
     post_install_status: "running",
     sync_api_token: syncApiToken,
+    sync_api_url: syncApiUrl,
     updated_at: new Date().toISOString(),
   }).eq("id", localEnvId);
 
@@ -928,7 +950,6 @@ async function handleRecreate(req: Request, user: AuthedUser): Promise<Response>
       "exec > >(tee -a /post_install.log) 2>&1",
       `export BASE_DOMAIN=${shellQuote(apexDomain)}`,
       `export LETSENCRYPT_EMAIL=${shellQuote(`admin@${apexDomain}`)}`,
-      `export SYNC_API_DOMAIN=${shellQuote(hostname)}`,
       `export SYNC_API_TOKEN=${shellQuote(syncApiToken)}`,
       `export JRP_REPO_URL="https://github.com/bzalk/jrp-supabase.git"`,
       `export JRP_REPO_BRANCH="main"`,
@@ -945,7 +966,7 @@ async function handleRecreate(req: Request, user: AuthedUser): Promise<Response>
     scriptContent = buildPostInstallScript(installUrl, {
       syncApiToken,
       hostname,
-      syncApiUrl: `https://${hostname}`,
+      syncApiUrl,
       apexDomain,
       subdomain: String(envRow.subdomain || ""),
     });
@@ -1416,8 +1437,9 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
     const ip = envRow.vps_ip as string;
     const password = envRow.vps_root_password as string;
     const baseDomain = envRow.apex_domain as string;
-    const syncApiToken = String(envRow.sync_api_token || "") || generateSyncApiToken();
-    const sshCommand = `ssh root@${ip} 'CONFIRM_RESET=CONFIRM BASE_DOMAIN=${baseDomain} SYNC_API_TOKEN=<token> curl -fsSL ${RESET_VPS_SCRIPT_URL} | bash'`;
+    const syncApiToken = generateSyncApiToken();
+    const syncApiUrl = syncApiUrlForApex(baseDomain || "");
+    const sshCommand = `ssh root@${ip} 'curl -fsSL ${RESET_VPS_SCRIPT_URL} | SYNC_API_TOKEN=<fresh-token> bash -s -- ${baseDomain} --confirm CONFIRM'`;
 
     if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
     if (!password) {
@@ -1428,18 +1450,16 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
     }
     if (!baseDomain) return jsonResponse({ error: "No apex_domain configured for this environment" }, 400);
 
-    // Persist token if freshly generated
-    if (!envRow.sync_api_token) {
-      await user.client.from("local_environments").update({
-        sync_api_token: syncApiToken,
-        updated_at: new Date().toISOString(),
-      }).eq("id", localEnvId);
-    }
+    await user.client.from("local_environments").update({
+      sync_api_token: syncApiToken,
+      sync_api_url: syncApiUrl,
+      updated_at: new Date().toISOString(),
+    }).eq("id", localEnvId);
 
     await recordEvent(user.client, user.id, localEnvId, "reset-vps", 5,
       "Connecting to server via SSH to run full VPS reset", "running");
 
-    const command = `CONFIRM_RESET=CONFIRM BASE_DOMAIN=${shellQuote(baseDomain)} SYNC_API_TOKEN=${shellQuote(syncApiToken)} curl -fsSL ${RESET_VPS_SCRIPT_URL} | bash`;
+    const command = `curl -fsSL ${shellQuote(RESET_VPS_SCRIPT_URL)} | SYNC_API_TOKEN=${shellQuote(syncApiToken)} bash -s -- ${shellQuote(baseDomain)} --confirm CONFIRM`;
     let lastProgressUpdate = 0;
     const result = await execSshCommand(ip, password, command, (stdout) => {
       const now = Date.now();
@@ -1461,6 +1481,7 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
         health_check_results: null,
         last_health_check_at: null,
         sync_api_token: syncApiToken,
+        sync_api_url: syncApiUrl,
         connection_mode: null,
         updated_at: new Date().toISOString(),
       }).eq("id", localEnvId);
