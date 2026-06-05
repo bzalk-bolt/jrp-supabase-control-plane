@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "github": {
+      "enabled": true
+    },
+    "supabase": {
+      "enabled": false
+    }
+  }
+}
