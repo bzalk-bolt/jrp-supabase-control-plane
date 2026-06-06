@@ -20,15 +20,27 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [state, setState] = useState<AuthState>({ user: null, session: null, loading: true });
 
   useEffect(() => {
-    authService.getSession().then(session => {
-      setState({ user: session?.user || null, session, loading: false });
-    });
+    let mounted = true;
+
+    authService.getSession()
+      .then(session => {
+        if (!mounted) return;
+        setState({ user: session?.user || null, session, loading: false });
+      })
+      .catch(error => {
+        console.warn('Auth session bootstrap failed', error);
+        if (!mounted) return;
+        setState({ user: null, session: null, loading: false });
+      });
 
     const { data: { subscription } } = authService.onAuthStateChange((_event, session) => {
       setState(prev => ({ ...prev, user: session?.user || null, session }));
     });
 
-    return () => subscription.unsubscribe();
+    return () => {
+      mounted = false;
+      subscription.unsubscribe();
+    };
   }, []);
 
   async function handleSignIn(email: string, password: string) {
