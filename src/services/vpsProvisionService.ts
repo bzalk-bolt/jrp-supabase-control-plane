@@ -311,9 +311,10 @@ export async function repairSsl(localEnvId: string): Promise<RepairSslResponse> 
 export interface ResetVpsResponse {
   status: string;
   message: string;
-  ssh_command: string;
+  ssh_command?: string;
   output?: string;
   error?: string;
+  exit_code?: number | null;
 }
 
 export async function resetVps(localEnvId: string): Promise<ResetVpsResponse> {
@@ -328,6 +329,25 @@ export async function resetVps(localEnvId: string): Promise<ResetVpsResponse> {
       message: body?.error || `VPS reset failed (${res.status})`,
       ssh_command: body?.ssh_command || '',
       output: body?.output,
+    };
+    throw Object.assign(new Error(resp.message), { ssh_command: resp.ssh_command, output: resp.output });
+  }
+  return body as ResetVpsResponse;
+}
+
+export async function pollResetVps(localEnvId: string): Promise<ResetVpsResponse> {
+  const res = await authedFetch('reset-vps-status', {
+    method: 'POST',
+    body: JSON.stringify({ local_environment_id: localEnvId }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const resp: ResetVpsResponse = {
+      status: 'failed',
+      message: body?.error || `VPS reset status failed (${res.status})`,
+      ssh_command: body?.ssh_command || '',
+      output: body?.output,
+      exit_code: body?.exit_code,
     };
     throw Object.assign(new Error(resp.message), { ssh_command: resp.ssh_command, output: resp.output });
   }

@@ -1459,59 +1459,143 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
     await recordEvent(user.client, user.id, localEnvId, "reset-vps", 5,
       "Connecting to server via SSH to run full VPS reset", "running");
 
-    const command = `curl -fsSL ${shellQuote(RESET_VPS_SCRIPT_URL)} | SYNC_API_TOKEN=${shellQuote(syncApiToken)} bash -s -- ${shellQuote(baseDomain)} --confirm CONFIRM`;
-    let lastProgressUpdate = 0;
-    const result = await execSshCommand(ip, password, command, (stdout) => {
-      const now = Date.now();
-      if (now - lastProgressUpdate > 5000) {
-        lastProgressUpdate = now;
-        const lastLine = stdout.trim().split("\n").pop() || "";
-        EdgeRuntime.waitUntil(
-          recordEvent(user.client, user.id, localEnvId, "reset-vps", 50,
-            lastLine.slice(0, 150) || "Running reset script...", "running", { stdout_tail: stdout.slice(-400) })
-        );
-      }
-    }, 15 * 60 * 1000);
+    const resetCommand = `set -o pipefail; rm -f /root/jrp-reset-vps-latest.exit; curl -fsSL ${shellQuote(RESET_VPS_SCRIPT_URL)} | SYNC_API_TOKEN=${shellQuote(syncApiToken)} bash -s -- ${shellQuote(baseDomain)} --confirm CONFIRM; code=$?; echo "$code" > /root/jrp-reset-vps-latest.exit; exit "$code"`;
+    const command = [
+      "cd /",
+      "rm -f /root/jrp-reset-vps-latest.pid /root/jrp-reset-vps-latest.exit /root/jrp-reset-vps-launch.log",
+      `nohup bash -c ${shellQuote(resetCommand)} >/root/jrp-reset-vps-launch.log 2>&1 &`,
+      "pid=$!",
+      "echo \"$pid\" >/root/jrp-reset-vps-latest.pid",
+      "echo \"$pid\"",
+    ].join("\n");
+    const result = await execSshCommand(ip, password, command, undefined, 60_000);
+    if (result.code !== 0) {
+      await recordEvent(user.client, user.id, localEnvId, "reset-vps", 10,
+        `Failed to start VPS reset: exit code ${result.code}`, "failed", { stdout_tail: result.stdout.slice(-500), stderr_tail: result.stderr.slice(-500) });
+      return jsonResponse({
+        status: "failed",
+        message: `Failed to start reset script with exit code ${result.code}.`,
+        output: (result.stdout + "\n" + result.stderr).slice(-4000),
+        ssh_command: sshCommand,
+      }, 200);
+    }
 
-    if (result.code === 0) {
-      // Reset local environment state back to post-install step
+    const pid = result.stdout.trim().split("\n").pop() || "";
+    await user.client.from("local_environments").update({
+      vps_status: "installing",
+      post_install_status: "running",
+      health_check_results: null,
+      last_health_check_at: null,
+      connection_mode: null,
+      updated_at: new Date().toISOString(),
+    }).eq("id", localEnvId);
+
+    await recordEvent(user.client, user.id, localEnvId, "reset-vps", 15,
+      "VPS reset started in the background", "running", { pid });
+    return jsonResponse({
+      status: "running",
+      message: "VPS reset started. Progress will update from the server log.",
+      output: result.stdout.slice(-2000),
+      ssh_command: sshCommand,
+    }, 202);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return jsonResponse({ error: message, ssh_command: "" }, 500);
+  }
+}
+
+async function handleResetVpsStatus(req: Request, user: AuthedUser): Promise<Response> {
+  try {
+    const body = (await req.json().catch(() => ({}))) as { local_environment_id?: string };
+    const localEnvId = body.local_environment_id;
+    if (!localEnvId) return jsonResponse({ error: "local_environment_id required" }, 400);
+
+    const { data: envRow } = await user.client
+      .from("local_environments")
+      .select("*")
+      .eq("id", localEnvId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!envRow) return jsonResponse({ error: "Environment not found" }, 404);
+
+    const ip = envRow.vps_ip as string;
+    const password = envRow.vps_root_password as string;
+    if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
+    if (!password) return jsonResponse({ error: "No root password stored for this environment." }, 400);
+
+    const command = [
+      "pid=$(cat /root/jrp-reset-vps-latest.pid 2>/dev/null || true)",
+      "exit_code=$(cat /root/jrp-reset-vps-latest.exit 2>/dev/null || true)",
+      "running=false",
+      "if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then running=true; fi",
+      "echo __JRP_STATUS__",
+      "echo \"pid=$pid\"",
+      "echo \"running=$running\"",
+      "echo \"exit_code=$exit_code\"",
+      "echo __JRP_LOG__",
+      "tail -n 160 /root/jrp-reset-vps-latest.log 2>/dev/null || tail -n 160 /root/jrp-reset-vps-launch.log 2>/dev/null || true",
+    ].join("\n");
+    const result = await execSshCommand(ip, password, command, undefined, 60_000);
+    const output = result.stdout || "";
+    const statusBlock = output.split("__JRP_STATUS__")[1]?.split("__JRP_LOG__")[0] || "";
+    const log = output.split("__JRP_LOG__")[1]?.trim() || output.trim();
+    const running = /running=true/.test(statusBlock);
+    const exitCodeMatch = statusBlock.match(/exit_code=([0-9]+)/);
+    const exitCode = exitCodeMatch ? Number(exitCodeMatch[1]) : null;
+    const lastLine = log.trim().split("\n").filter(Boolean).pop() || "";
+
+    if (exitCode === 0 || /Reset completed/.test(log)) {
+      const syncApiUrl = syncApiUrlForApex(String(envRow.apex_domain || ""));
       await user.client.from("local_environments").update({
         post_install_status: "pending",
         dns_a_record_verified_at: null,
         health_check_results: null,
         last_health_check_at: null,
-        sync_api_token: syncApiToken,
         sync_api_url: syncApiUrl,
         connection_mode: null,
         updated_at: new Date().toISOString(),
       }).eq("id", localEnvId);
-
-      // Remove any existing project binding since the environment is wiped
       await user.client.from("local_environment_bindings")
         .delete()
         .eq("local_environment_id", localEnvId);
-
       await recordEvent(user.client, user.id, localEnvId, "reset-vps", 100,
-        "VPS reset completed successfully", "succeeded", { stdout_tail: result.stdout.slice(-500) });
+        "VPS reset completed successfully", "succeeded", { stdout_tail: log.slice(-500), exit_code: exitCode });
       return jsonResponse({
         status: "completed",
         message: "VPS reset and reinstall completed successfully.",
-        output: result.stdout.slice(-4000),
-        ssh_command: sshCommand,
-      }, 200);
-    } else {
-      await recordEvent(user.client, user.id, localEnvId, "reset-vps", 80,
-        `VPS reset script exited with code ${result.code}`, "failed", { stdout_tail: result.stdout.slice(-500), stderr_tail: result.stderr.slice(-500) });
-      return jsonResponse({
-        status: "failed",
-        message: `Reset script exited with code ${result.code}. Check the output below or run manually via SSH.`,
-        output: (result.stdout + "\n" + result.stderr).slice(-4000),
-        ssh_command: sshCommand,
+        output: log.slice(-4000),
+        exit_code: exitCode,
       }, 200);
     }
+
+    if (exitCode !== null && exitCode !== 0) {
+      await user.client.from("local_environments").update({
+        vps_status: "failed",
+        post_install_status: "failed",
+        updated_at: new Date().toISOString(),
+      }).eq("id", localEnvId);
+      await recordEvent(user.client, user.id, localEnvId, "reset-vps", 95,
+        `VPS reset failed with exit code ${exitCode}`, "failed", { stdout_tail: log.slice(-500), exit_code: exitCode });
+      return jsonResponse({
+        status: "failed",
+        message: `VPS reset failed with exit code ${exitCode}.`,
+        output: log.slice(-4000),
+        exit_code: exitCode,
+      }, 200);
+    }
+
+    const message = lastLine || (running ? "VPS reset is still running" : "Waiting for reset log output");
+    await recordEvent(user.client, user.id, localEnvId, "reset-vps", 50,
+      message.slice(0, 150), "running", { stdout_tail: log.slice(-500), running });
+    return jsonResponse({
+      status: "running",
+      message,
+      output: log.slice(-4000),
+      exit_code: null,
+    }, 200);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
-    return jsonResponse({ error: message, ssh_command: "" }, 500);
+    return jsonResponse({ error: message }, 500);
   }
 }
 
@@ -1681,6 +1765,11 @@ Deno.serve(async (req: Request) => {
       const auth = await authenticate(req);
       if (auth instanceof Response) return auth;
       return await handleResetVps(req, auth);
+    }
+    if (op === "reset-vps-status" && req.method === "POST") {
+      const auth = await authenticate(req);
+      if (auth instanceof Response) return auth;
+      return await handleResetVpsStatus(req, auth);
     }
     if (op === "repair-sync-token" && req.method === "POST") {
       const auth = await authenticate(req);

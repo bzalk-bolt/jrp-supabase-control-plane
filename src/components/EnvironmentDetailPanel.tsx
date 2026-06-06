@@ -569,12 +569,14 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
     stopResetPolling();
     resetPollRef.current = setInterval(async () => {
       try {
-        const ev = await localEnvironmentsService.getLatestResetVpsEvent(env.id);
-        if (ev) {
-          setResetProgressMsg(ev.message);
-          if (ev.status === 'succeeded' || ev.status === 'failed') {
-            stopResetPolling();
-          }
+        const res = await vpsProvisionService.pollResetVps(env.id);
+        setResetProgressMsg(res.message);
+        if (res.status === 'completed' || res.status === 'failed') {
+          setResetVpsResult({ status: res.status, message: res.message, ssh_command: res.ssh_command, output: res.output });
+          setResettingVps(false);
+          setResetProgressMsg(null);
+          stopResetPolling();
+          await onChange();
         }
       } catch { /* ignore polling errors */ }
     }, 4000);
@@ -597,6 +599,11 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
     try {
       const res = await vpsProvisionService.resetVps(env.id);
       setResetVpsResult({ status: res.status, message: res.message, ssh_command: res.ssh_command, output: res.output });
+      if (res.status !== 'running') {
+        setResettingVps(false);
+        setResetProgressMsg(null);
+        stopResetPolling();
+      }
     } catch (e: unknown) {
       const err = e as Error & { ssh_command?: string; output?: string };
       setResetVpsResult({
@@ -605,7 +612,6 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
         ssh_command: err.ssh_command,
         output: err.output,
       });
-    } finally {
       setResettingVps(false);
       setResetProgressMsg(null);
       stopResetPolling();
@@ -729,7 +735,7 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 {resetProgressMsg || 'Running full VPS reset...'}
               </p>
-              <p className="text-gray-500 text-[11px]">This may take 5-15 minutes. Do not close this page.</p>
+              <p className="text-gray-500 text-[11px]">This may take 5-15 minutes. You can leave and return; progress is read from the server log.</p>
             </div>
           )}
           {resetVpsResult?.message && (
@@ -1246,10 +1252,14 @@ function DangerZoneSection({ env, onDelete, onChange }: { env: LocalEnvironment;
     stopPolling();
     pollRef.current = setInterval(async () => {
       try {
-        const ev = await localEnvironmentsService.getLatestResetVpsEvent(env.id);
-        if (ev) {
-          setProgressMsg(ev.message);
-          if (ev.status === 'succeeded' || ev.status === 'failed') stopPolling();
+        const res = await vpsProvisionService.pollResetVps(env.id);
+        setProgressMsg(res.message);
+        if (res.status === 'completed' || res.status === 'failed') {
+          setResetResult({ status: res.status, message: res.message, output: res.output });
+          setResetting(false);
+          setProgressMsg(null);
+          stopPolling();
+          await onChange();
         }
       } catch { /* ignore */ }
     }, 4000);
@@ -1273,11 +1283,15 @@ function DangerZoneSection({ env, onDelete, onChange }: { env: LocalEnvironment;
     try {
       const res = await vpsProvisionService.resetVps(env.id);
       setResetResult({ status: res.status, message: res.message, output: res.output });
-      await onChange();
+      if (res.status !== 'running') {
+        setResetting(false);
+        setProgressMsg(null);
+        stopPolling();
+        await onChange();
+      }
     } catch (e: unknown) {
       const err = e as Error & { output?: string };
       setResetResult({ status: 'failed', message: err.message || 'Reset failed', output: err.output });
-    } finally {
       setResetting(false);
       setProgressMsg(null);
       stopPolling();
@@ -1344,7 +1358,7 @@ function DangerZoneSection({ env, onDelete, onChange }: { env: LocalEnvironment;
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 {progressMsg || 'Running full VPS reset...'}
               </p>
-              <p className="text-gray-500 text-[11px]">This may take 5-15 minutes. Do not close this page.</p>
+              <p className="text-gray-500 text-[11px]">This may take 5-15 minutes. You can leave and return; progress is read from the server log.</p>
             </div>
           )}
           {resetResult?.message && (
