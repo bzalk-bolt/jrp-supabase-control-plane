@@ -108,7 +108,7 @@ export async function startProvision(input: {
   template_id?: string;
   datacenter_id?: string;
   public_key_id?: string;
-  letsencrypt_staging?: boolean;
+  letsencrypt_production?: boolean;
   letsencrypt_ca_server?: string;
 }): Promise<StartResponse> {
   const res = await authedFetch('start', {
@@ -133,7 +133,7 @@ export async function resumeSetup(input: {
   template_id?: string;
   datacenter_id?: string;
   public_key_id?: string;
-  letsencrypt_staging?: boolean;
+  letsencrypt_production?: boolean;
   letsencrypt_ca_server?: string;
 }): Promise<StartResponse> {
   const res = await authedFetch('resume-setup', {
@@ -193,7 +193,7 @@ export async function recreateVps(input: {
   local_environment_id: string;
   template_id?: string;
   post_install_script_url?: string;
-  letsencrypt_staging?: boolean;
+  letsencrypt_production?: boolean;
   letsencrypt_ca_server?: string;
 }): Promise<RecreateResponse> {
   const res = await authedFetch('recreate', {
@@ -296,10 +296,13 @@ export interface RepairSslResponse {
   error?: string;
 }
 
-export async function repairSsl(localEnvId: string): Promise<RepairSslResponse> {
+export async function repairSsl(localEnvId: string, opts?: {
+  letsencrypt_production?: boolean;
+  letsencrypt_ca_server?: string;
+}): Promise<RepairSslResponse> {
   const res = await authedFetch('repair-ssl', {
     method: 'POST',
-    body: JSON.stringify({ local_environment_id: localEnvId }),
+    body: JSON.stringify({ local_environment_id: localEnvId, ...(opts || {}) }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -324,7 +327,7 @@ export interface ResetVpsResponse {
 }
 
 export async function resetVps(localEnvId: string, opts?: {
-  letsencrypt_staging?: boolean;
+  letsencrypt_production?: boolean;
   letsencrypt_ca_server?: string;
 }): Promise<ResetVpsResponse> {
   const res = await authedFetch('reset-vps', {
