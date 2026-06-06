@@ -183,6 +183,31 @@ function syncApiUrlForApex(apexDomain: string): string {
   return host ? `https://${host}` : "";
 }
 
+function acmeRateLimitSummary(output: string): string | null {
+  const lines = output.split(/\r?\n/).filter(Boolean);
+  const line = [...lines].reverse().find(item =>
+    /rateLimited|too many certificates|too many new orders|retry after/i.test(item)
+  );
+  if (!line) return null;
+  const retry = line.match(/retry after ([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]+ UTC)/i)?.[1];
+  if (retry) {
+    return `Let's Encrypt rate limit hit. Retry after ${retry}. Do not reset or repair production certificates again before then; use staging for test runs.`;
+  }
+  return "Let's Encrypt rate limit hit. Do not retry production certificate issuance yet; use staging for test runs and check the logs for the retry-after time.";
+}
+
+function boolInput(value: unknown): boolean {
+  return value === true || String(value || "").toLowerCase() === "true";
+}
+
+function letsEncryptCaServer(staging: boolean, override?: string): string {
+  const trimmed = String(override || "").trim();
+  if (trimmed) return trimmed;
+  return staging
+    ? "https://acme-staging-v02.api.letsencrypt.org/directory"
+    : "https://acme-v02.api.letsencrypt.org/directory";
+}
+
 function buildPostInstallScript(
   installUrl: string,
   context: {
@@ -191,10 +216,14 @@ function buildPostInstallScript(
     syncApiUrl: string;
     apexDomain: string;
     subdomain: string;
+    letsencryptStaging?: boolean;
+    letsencryptCaServer?: string;
   },
 ): string {
   const url = installUrl || DEFAULT_INSTALL_URL;
   const syncApiDomain = context.syncApiUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
+  const staging = context.letsencryptStaging === true;
+  const caServer = letsEncryptCaServer(staging, context.letsencryptCaServer);
   return [
     "#!/bin/bash",
     "set -euo pipefail",
@@ -205,6 +234,8 @@ function buildPostInstallScript(
     `export SYNC_API_DOMAIN=${shellQuote(syncApiDomain)}`,
     `export SYNC_API_TOKEN=${shellQuote(context.syncApiToken)}`,
     `export SYNC_API_URL=${shellQuote(context.syncApiUrl)}`,
+    `export LETSENCRYPT_STAGING=${shellQuote(String(staging))}`,
+    `export LETSENCRYPT_CA_SERVER=${shellQuote(caServer)}`,
     `export APEX_DOMAIN=${shellQuote(context.apexDomain)}`,
     `export SUBDOMAIN=${shellQuote(context.subdomain)}`,
     "apt-get update -y",
@@ -281,6 +312,8 @@ interface StartRequest {
   template_id?: string;
   datacenter_id?: string;
   public_key_id?: string;
+  letsencrypt_staging?: boolean | string;
+  letsencrypt_ca_server?: string;
 }
 
 interface PollRequest {
@@ -493,6 +526,8 @@ async function handleStart(req: Request, user: AuthedUser): Promise<Response> {
   const syncApiUrl = syncApiUrlForApex(apexDomain);
   const rootPassword = generateRootPassword();
   const syncApiToken = generateSyncApiToken();
+  const letsencryptStaging = boolInput(body.letsencrypt_staging);
+  const letsencryptCaServer = letsEncryptCaServer(letsencryptStaging, body.letsencrypt_ca_server);
   const installUrl = cfg.syncApiInstallUrl || DEFAULT_INSTALL_URL;
 
   const urlCheck = await validateInstallUrl(installUrl);
@@ -507,6 +542,8 @@ async function handleStart(req: Request, user: AuthedUser): Promise<Response> {
     syncApiUrl,
     apexDomain,
     subdomain: String(envRow.subdomain || ""),
+    letsencryptStaging,
+    letsencryptCaServer,
   });
 
   await user.client.from("local_environments").update({
@@ -693,6 +730,8 @@ interface ResumeSetupRequest {
   template_id?: string;
   datacenter_id?: string;
   public_key_id?: string;
+  letsencrypt_staging?: boolean | string;
+  letsencrypt_ca_server?: string;
 }
 
 async function handleResumeSetup(req: Request, user: AuthedUser): Promise<Response> {
@@ -777,6 +816,8 @@ async function handleResumeSetup(req: Request, user: AuthedUser): Promise<Respon
   const syncApiUrl = syncApiUrlForApex(apexDomain);
   const rootPassword = generateRootPassword();
   const syncApiToken = generateSyncApiToken();
+  const letsencryptStaging = boolInput(body.letsencrypt_staging);
+  const letsencryptCaServer = letsEncryptCaServer(letsencryptStaging, body.letsencrypt_ca_server);
   const installUrl = cfg.syncApiInstallUrl || DEFAULT_INSTALL_URL;
 
   const urlCheck = await validateInstallUrl(installUrl);
@@ -790,6 +831,8 @@ async function handleResumeSetup(req: Request, user: AuthedUser): Promise<Respon
     syncApiUrl,
     apexDomain,
     subdomain: String(envRow.subdomain || ""),
+    letsencryptStaging,
+    letsencryptCaServer,
   });
 
   await user.client.from("local_environments").update({
@@ -882,6 +925,8 @@ interface RecreateRequest {
   local_environment_id?: string;
   template_id?: string;
   post_install_script_url?: string;
+  letsencrypt_staging?: boolean | string;
+  letsencrypt_ca_server?: string;
 }
 
 async function handleRecreate(req: Request, user: AuthedUser): Promise<Response> {
@@ -928,6 +973,8 @@ async function handleRecreate(req: Request, user: AuthedUser): Promise<Response>
   const hostname = String(envRow.full_hostname || apexDomain);
   const syncApiUrl = syncApiUrlForApex(apexDomain);
   const syncApiToken = generateSyncApiToken();
+  const letsencryptStaging = boolInput(body.letsencrypt_staging);
+  const letsencryptCaServer = letsEncryptCaServer(letsencryptStaging, body.letsencrypt_ca_server);
 
   await user.client.from("local_environments").update({
     vps_status: "provisioning",
@@ -950,6 +997,8 @@ async function handleRecreate(req: Request, user: AuthedUser): Promise<Response>
       "exec > >(tee -a /post_install.log) 2>&1",
       `export BASE_DOMAIN=${shellQuote(apexDomain)}`,
       `export LETSENCRYPT_EMAIL=${shellQuote(`admin@${apexDomain}`)}`,
+      `export LETSENCRYPT_STAGING=${shellQuote(String(letsencryptStaging))}`,
+      `export LETSENCRYPT_CA_SERVER=${shellQuote(letsencryptCaServer)}`,
       `export SYNC_API_TOKEN=${shellQuote(syncApiToken)}`,
       `export JRP_REPO_URL="https://github.com/bzalk/jrp-supabase.git"`,
       `export JRP_REPO_BRANCH="main"`,
@@ -969,6 +1018,8 @@ async function handleRecreate(req: Request, user: AuthedUser): Promise<Response>
       syncApiUrl,
       apexDomain,
       subdomain: String(envRow.subdomain || ""),
+      letsencryptStaging,
+      letsencryptCaServer,
     });
   }
 
@@ -1401,12 +1452,15 @@ async function handleRepairSsl(req: Request, user: AuthedUser): Promise<Response
         ssh_command: sshCommand,
       }, 200);
     } else {
+      const output = result.stdout + "\n" + result.stderr;
+      const rateLimitMessage = acmeRateLimitSummary(output);
+      const failureMessage = rateLimitMessage || `Repair script exited with code ${result.code}. Check the output below or run manually via SSH.`;
       await recordEvent(user.client, user.id, localEnvId, "repair-ssl", 80,
-        `SSL repair script exited with code ${result.code}`, "failed", { stdout_tail: result.stdout.slice(-500), stderr_tail: result.stderr.slice(-500) });
+        failureMessage, "failed", { stdout_tail: result.stdout.slice(-500), stderr_tail: result.stderr.slice(-500) });
       return jsonResponse({
         status: "failed",
-        message: `Repair script exited with code ${result.code}. Check the output below or run manually via SSH.`,
-        output: (result.stdout + "\n" + result.stderr).slice(-2000),
+        message: failureMessage,
+        output: output.slice(-2000),
         ssh_command: sshCommand,
       }, 200);
     }
@@ -1422,7 +1476,11 @@ const RESET_VPS_SCRIPT_URL = "https://raw.githubusercontent.com/bzalk/jrp-supaba
 
 async function handleResetVps(req: Request, user: AuthedUser): Promise<Response> {
   try {
-    const body = (await req.json().catch(() => ({}))) as { local_environment_id?: string };
+    const body = (await req.json().catch(() => ({}))) as {
+      local_environment_id?: string;
+      letsencrypt_staging?: boolean | string;
+      letsencrypt_ca_server?: string;
+    };
     const localEnvId = body.local_environment_id;
     if (!localEnvId) return jsonResponse({ error: "local_environment_id required" }, 400);
 
@@ -1439,6 +1497,8 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
     const baseDomain = envRow.apex_domain as string;
     const syncApiToken = generateSyncApiToken();
     const syncApiUrl = syncApiUrlForApex(baseDomain || "");
+    const letsencryptStaging = boolInput(body.letsencrypt_staging);
+    const letsencryptCaServer = letsEncryptCaServer(letsencryptStaging, body.letsencrypt_ca_server);
     const sshCommand = `ssh root@${ip} 'curl -fsSL ${RESET_VPS_SCRIPT_URL} | SYNC_API_TOKEN=<fresh-token> bash -s -- ${baseDomain} --confirm CONFIRM'`;
 
     if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
@@ -1459,7 +1519,7 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
     await recordEvent(user.client, user.id, localEnvId, "reset-vps", 5,
       "Connecting to server via SSH to run full VPS reset", "running");
 
-    const resetCommand = `set -o pipefail; rm -f /root/jrp-reset-vps-latest.exit; curl -fsSL ${shellQuote(RESET_VPS_SCRIPT_URL)} | SYNC_API_TOKEN=${shellQuote(syncApiToken)} bash -s -- ${shellQuote(baseDomain)} --confirm CONFIRM; code=$?; echo "$code" > /root/jrp-reset-vps-latest.exit; exit "$code"`;
+    const resetCommand = `set -o pipefail; rm -f /root/jrp-reset-vps-latest.exit; curl -fsSL ${shellQuote(RESET_VPS_SCRIPT_URL)} | SYNC_API_TOKEN=${shellQuote(syncApiToken)} LETSENCRYPT_STAGING=${shellQuote(String(letsencryptStaging))} LETSENCRYPT_CA_SERVER=${shellQuote(letsencryptCaServer)} bash -s -- ${shellQuote(baseDomain)} --confirm CONFIRM; code=$?; echo "$code" > /root/jrp-reset-vps-latest.exit; exit "$code"`;
     const command = [
       "cd /",
       "rm -f /root/jrp-reset-vps-latest.pid /root/jrp-reset-vps-latest.exit /root/jrp-reset-vps-launch.log",
@@ -1569,16 +1629,18 @@ async function handleResetVpsStatus(req: Request, user: AuthedUser): Promise<Res
     }
 
     if (exitCode !== null && exitCode !== 0) {
+      const rateLimitMessage = acmeRateLimitSummary(log);
+      const failureMessage = rateLimitMessage || `VPS reset failed with exit code ${exitCode}.`;
       await user.client.from("local_environments").update({
         vps_status: "failed",
         post_install_status: "failed",
         updated_at: new Date().toISOString(),
       }).eq("id", localEnvId);
       await recordEvent(user.client, user.id, localEnvId, "reset-vps", 95,
-        `VPS reset failed with exit code ${exitCode}`, "failed", { stdout_tail: log.slice(-500), exit_code: exitCode });
+        failureMessage, "failed", { stdout_tail: log.slice(-500), exit_code: exitCode });
       return jsonResponse({
         status: "failed",
-        message: `VPS reset failed with exit code ${exitCode}.`,
+        message: failureMessage,
         output: log.slice(-4000),
         exit_code: exitCode,
       }, 200);
