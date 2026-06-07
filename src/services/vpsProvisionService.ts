@@ -108,8 +108,6 @@ export async function startProvision(input: {
   template_id?: string;
   datacenter_id?: string;
   public_key_id?: string;
-  letsencrypt_production?: boolean;
-  letsencrypt_ca_server?: string;
 }): Promise<StartResponse> {
   const res = await authedFetch('start', {
     method: 'POST',
@@ -133,8 +131,6 @@ export async function resumeSetup(input: {
   template_id?: string;
   datacenter_id?: string;
   public_key_id?: string;
-  letsencrypt_production?: boolean;
-  letsencrypt_ca_server?: string;
 }): Promise<StartResponse> {
   const res = await authedFetch('resume-setup', {
     method: 'POST',
@@ -193,8 +189,6 @@ export async function recreateVps(input: {
   local_environment_id: string;
   template_id?: string;
   post_install_script_url?: string;
-  letsencrypt_production?: boolean;
-  letsencrypt_ca_server?: string;
 }): Promise<RecreateResponse> {
   const res = await authedFetch('recreate', {
     method: 'POST',
@@ -296,13 +290,10 @@ export interface RepairSslResponse {
   error?: string;
 }
 
-export async function repairSsl(localEnvId: string, opts?: {
-  letsencrypt_production?: boolean;
-  letsencrypt_ca_server?: string;
-}): Promise<RepairSslResponse> {
+export async function repairSsl(localEnvId: string): Promise<RepairSslResponse> {
   const res = await authedFetch('repair-ssl', {
     method: 'POST',
-    body: JSON.stringify({ local_environment_id: localEnvId, ...(opts || {}) }),
+    body: JSON.stringify({ local_environment_id: localEnvId }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -320,19 +311,15 @@ export async function repairSsl(localEnvId: string, opts?: {
 export interface ResetVpsResponse {
   status: string;
   message: string;
-  ssh_command?: string;
+  ssh_command: string;
   output?: string;
   error?: string;
-  exit_code?: number | null;
 }
 
-export async function resetVps(localEnvId: string, opts?: {
-  letsencrypt_production?: boolean;
-  letsencrypt_ca_server?: string;
-}): Promise<ResetVpsResponse> {
+export async function resetVps(localEnvId: string): Promise<ResetVpsResponse> {
   const res = await authedFetch('reset-vps', {
     method: 'POST',
-    body: JSON.stringify({ local_environment_id: localEnvId, ...(opts || {}) }),
+    body: JSON.stringify({ local_environment_id: localEnvId }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
@@ -345,41 +332,4 @@ export async function resetVps(localEnvId: string, opts?: {
     throw Object.assign(new Error(resp.message), { ssh_command: resp.ssh_command, output: resp.output });
   }
   return body as ResetVpsResponse;
-}
-
-export async function pollResetVps(localEnvId: string): Promise<ResetVpsResponse> {
-  const res = await authedFetch('reset-vps-status', {
-    method: 'POST',
-    body: JSON.stringify({ local_environment_id: localEnvId }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const resp: ResetVpsResponse = {
-      status: 'failed',
-      message: body?.error || `VPS reset status failed (${res.status})`,
-      ssh_command: body?.ssh_command || '',
-      output: body?.output,
-      exit_code: body?.exit_code,
-    };
-    throw Object.assign(new Error(resp.message), { ssh_command: resp.ssh_command, output: resp.output });
-  }
-  return body as ResetVpsResponse;
-}
-
-export interface RepairSyncTokenResponse {
-  status: string;
-  message: string;
-  output?: string;
-}
-
-export async function repairSyncToken(localEnvId: string): Promise<RepairSyncTokenResponse> {
-  const res = await authedFetch('repair-sync-token', {
-    method: 'POST',
-    body: JSON.stringify({ local_environment_id: localEnvId }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    throw new Error(body?.error || `Sync token repair failed (${res.status})`);
-  }
-  return body as RepairSyncTokenResponse;
 }

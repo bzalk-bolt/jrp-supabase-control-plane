@@ -127,18 +127,6 @@ export async function updateLocalEnvironment(id: string, draft: LocalEnvironment
   return data as LocalEnvironment;
 }
 
-export function generateSyncApiToken(): string {
-  const bytes = new Uint8Array(32);
-  crypto.getRandomValues(bytes);
-  return Array.from(bytes).map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-export async function regenerateSyncToken(id: string): Promise<string> {
-  const token = generateSyncApiToken();
-  await updateLocalEnvironment(id, { sync_api_token: token });
-  return token;
-}
-
 export async function deleteLocalEnvironment(id: string): Promise<void> {
   const { error } = await supabase
     .from('local_environments')

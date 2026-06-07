@@ -40,12 +40,6 @@ export default function Layout() {
         setHasToken(false);
       }
     }).catch(() => setHasToken(false));
-
-    settingsService.getSupabaseAccessToken().then(info => {
-      if (info.token) {
-        syncApi.setSupabaseAccessTokenCache(info.token);
-      }
-    }).catch(() => {});
   }, []);
 
   function toggleCollapsed() {

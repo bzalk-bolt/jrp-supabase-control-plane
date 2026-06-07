@@ -167,49 +167,10 @@ async function recordEvent(
   });
 }
 
-const DEFAULT_INSTALL_URL = "https://raw.githubusercontent.com/bzalk/jrp-supabase/main/scripts/hostinger-post-install.sh";
+const DEFAULT_INSTALL_URL = "https://raw.githubusercontent.com/jamrock/sync-api/main/install.sh";
 
 function shellQuote(value: string): string {
   return `'${String(value).replace(/'/g, "'\\''")}'`;
-}
-
-function syncApiHostForApex(apexDomain: string): string {
-  const root = apexDomain.trim().toLowerCase();
-  return root ? `sync-api.${root}` : "";
-}
-
-function syncApiUrlForApex(apexDomain: string): string {
-  const host = syncApiHostForApex(apexDomain);
-  return host ? `https://${host}` : "";
-}
-
-function acmeRateLimitSummary(output: string): string | null {
-  const lines = output.split(/\r?\n/).filter(Boolean);
-  const line = [...lines].reverse().find(item =>
-    /rateLimited|too many certificates|too many new orders|retry after/i.test(item)
-  );
-  if (!line) return null;
-  const retry = line.match(/retry after ([0-9]{4}-[0-9]{2}-[0-9]{2} [0-9:]+ UTC)/i)?.[1];
-  if (retry) {
-    return `Let's Encrypt rate limit hit. Retry after ${retry}. Do not reset or repair production certificates again before then; use staging for test runs.`;
-  }
-  return "Let's Encrypt rate limit hit. Do not retry production certificate issuance yet; use staging for test runs and check the logs for the retry-after time.";
-}
-
-function boolInput(value: unknown): boolean {
-  return value === true || String(value || "").toLowerCase() === "true";
-}
-
-function letsEncryptProduction(production: unknown, staging: unknown): boolean {
-  return boolInput(production) && !boolInput(staging);
-}
-
-function letsEncryptCaServer(production: boolean, override?: string): string {
-  const trimmed = String(override || "").trim();
-  if (trimmed) return trimmed;
-  return production
-    ? "https://acme-v02.api.letsencrypt.org/directory"
-    : "https://acme-staging-v02.api.letsencrypt.org/directory";
 }
 
 function buildPostInstallScript(
@@ -220,29 +181,17 @@ function buildPostInstallScript(
     syncApiUrl: string;
     apexDomain: string;
     subdomain: string;
-    letsencryptProduction?: boolean;
-    letsencryptStaging?: boolean;
-    letsencryptCaServer?: string;
   },
 ): string {
   const url = installUrl || DEFAULT_INSTALL_URL;
-  const syncApiDomain = context.syncApiUrl.replace(/^https?:\/\//, "").replace(/\/.*$/, "");
-  const production = context.letsencryptProduction === true && context.letsencryptStaging !== true;
-  const staging = !production;
-  const caServer = letsEncryptCaServer(production, context.letsencryptCaServer);
   return [
     "#!/bin/bash",
     "set -euo pipefail",
     "exec > >(tee -a /var/log/sync-api-install.log) 2>&1",
     "export DEBIAN_FRONTEND=noninteractive",
     `export HOSTNAME=${shellQuote(context.hostname)}`,
-    `export BASE_DOMAIN=${shellQuote(context.apexDomain)}`,
-    `export SYNC_API_DOMAIN=${shellQuote(syncApiDomain)}`,
     `export SYNC_API_TOKEN=${shellQuote(context.syncApiToken)}`,
     `export SYNC_API_URL=${shellQuote(context.syncApiUrl)}`,
-    `export LETSENCRYPT_PRODUCTION=${shellQuote(String(production))}`,
-    `export LETSENCRYPT_STAGING=${shellQuote(String(staging))}`,
-    `export LETSENCRYPT_CA_SERVER=${shellQuote(caServer)}`,
     `export APEX_DOMAIN=${shellQuote(context.apexDomain)}`,
     `export SUBDOMAIN=${shellQuote(context.subdomain)}`,
     "apt-get update -y",
@@ -319,9 +268,6 @@ interface StartRequest {
   template_id?: string;
   datacenter_id?: string;
   public_key_id?: string;
-  letsencrypt_production?: boolean | string;
-  letsencrypt_staging?: boolean | string;
-  letsencrypt_ca_server?: string;
 }
 
 interface PollRequest {
@@ -528,15 +474,9 @@ async function handleStart(req: Request, user: AuthedUser): Promise<Response> {
     }
   }
 
-  const apexDomain = String(envRow.apex_domain || "");
-  if (!apexDomain) return jsonResponse({ error: "apex_domain is required" }, 400);
-  const hostname = String(envRow.full_hostname || apexDomain);
-  const syncApiUrl = syncApiUrlForApex(apexDomain);
+  const hostname = String(envRow.full_hostname || "");
   const rootPassword = generateRootPassword();
   const syncApiToken = generateSyncApiToken();
-  const letsencryptProduction = letsEncryptProduction(body.letsencrypt_production, body.letsencrypt_staging);
-  const letsencryptStaging = !letsencryptProduction;
-  const letsencryptCaServer = letsEncryptCaServer(letsencryptProduction, body.letsencrypt_ca_server);
   const installUrl = cfg.syncApiInstallUrl || DEFAULT_INSTALL_URL;
 
   const urlCheck = await validateInstallUrl(installUrl);
@@ -548,18 +488,15 @@ async function handleStart(req: Request, user: AuthedUser): Promise<Response> {
   const postInstallScript = buildPostInstallScript(installUrl, {
     syncApiToken,
     hostname,
-    syncApiUrl,
-    apexDomain,
+    syncApiUrl: `https://${hostname}`,
+    apexDomain: String(envRow.apex_domain || ""),
     subdomain: String(envRow.subdomain || ""),
-    letsencryptProduction,
-    letsencryptStaging,
-    letsencryptCaServer,
   });
 
   await user.client.from("local_environments").update({
     vps_status: "provisioning",
     sync_api_token: syncApiToken,
-    sync_api_url: syncApiUrl,
+    sync_api_url: `https://${hostname}`,
     vps_root_password: rootPassword,
     updated_at: new Date().toISOString(),
   }).eq("id", localEnvId);
@@ -740,9 +677,6 @@ interface ResumeSetupRequest {
   template_id?: string;
   datacenter_id?: string;
   public_key_id?: string;
-  letsencrypt_production?: boolean | string;
-  letsencrypt_staging?: boolean | string;
-  letsencrypt_ca_server?: string;
 }
 
 async function handleResumeSetup(req: Request, user: AuthedUser): Promise<Response> {
@@ -801,7 +735,7 @@ async function handleResumeSetup(req: Request, user: AuthedUser): Promise<Respon
       }
       // state is "initial" or "installing" -- proceed with setup below
     }
-  } catch {
+  } catch (_) {
     // Non-fatal: if state check fails, we still attempt setup
   }
 
@@ -821,15 +755,9 @@ async function handleResumeSetup(req: Request, user: AuthedUser): Promise<Respon
     }
   }
 
-  const apexDomain = String(envRow.apex_domain || "");
-  if (!apexDomain) return jsonResponse({ error: "apex_domain is required" }, 400);
-  const hostname = String(envRow.full_hostname || apexDomain);
-  const syncApiUrl = syncApiUrlForApex(apexDomain);
+  const hostname = String(envRow.full_hostname || "");
   const rootPassword = generateRootPassword();
-  const syncApiToken = generateSyncApiToken();
-  const letsencryptProduction = letsEncryptProduction(body.letsencrypt_production, body.letsencrypt_staging);
-  const letsencryptStaging = !letsencryptProduction;
-  const letsencryptCaServer = letsEncryptCaServer(letsencryptProduction, body.letsencrypt_ca_server);
+  const syncApiToken = String(envRow.sync_api_token || "") || generateSyncApiToken();
   const installUrl = cfg.syncApiInstallUrl || DEFAULT_INSTALL_URL;
 
   const urlCheck = await validateInstallUrl(installUrl);
@@ -840,18 +768,15 @@ async function handleResumeSetup(req: Request, user: AuthedUser): Promise<Respon
   const postInstallScript = buildPostInstallScript(installUrl, {
     syncApiToken,
     hostname,
-    syncApiUrl,
-    apexDomain,
+    syncApiUrl: `https://${hostname}`,
+    apexDomain: String(envRow.apex_domain || ""),
     subdomain: String(envRow.subdomain || ""),
-    letsencryptProduction,
-    letsencryptStaging,
-    letsencryptCaServer,
   });
 
   await user.client.from("local_environments").update({
     vps_status: "provisioning",
     sync_api_token: syncApiToken,
-    sync_api_url: syncApiUrl,
+    sync_api_url: `https://${hostname}`,
     vps_root_password: rootPassword,
     updated_at: new Date().toISOString(),
   }).eq("id", localEnvId);
@@ -938,9 +863,6 @@ interface RecreateRequest {
   local_environment_id?: string;
   template_id?: string;
   post_install_script_url?: string;
-  letsencrypt_production?: boolean | string;
-  letsencrypt_staging?: boolean | string;
-  letsencrypt_ca_server?: string;
 }
 
 async function handleRecreate(req: Request, user: AuthedUser): Promise<Response> {
@@ -982,21 +904,15 @@ async function handleRecreate(req: Request, user: AuthedUser): Promise<Response>
   }
 
   const scriptUrl = (body.post_install_script_url || "").trim();
+  const hostname = String(envRow.full_hostname || "");
   const apexDomain = String(envRow.apex_domain || "");
-  if (!apexDomain) return jsonResponse({ error: "apex_domain is required" }, 400);
-  const hostname = String(envRow.full_hostname || apexDomain);
-  const syncApiUrl = syncApiUrlForApex(apexDomain);
-  const syncApiToken = generateSyncApiToken();
-  const letsencryptProduction = letsEncryptProduction(body.letsencrypt_production, body.letsencrypt_staging);
-  const letsencryptStaging = !letsencryptProduction;
-  const letsencryptCaServer = letsEncryptCaServer(letsencryptProduction, body.letsencrypt_ca_server);
+  const syncApiToken = String(envRow.sync_api_token || "") || generateSyncApiToken();
 
   await user.client.from("local_environments").update({
     vps_status: "provisioning",
     post_install_script_url: scriptUrl || null,
     post_install_status: "running",
     sync_api_token: syncApiToken,
-    sync_api_url: syncApiUrl,
     updated_at: new Date().toISOString(),
   }).eq("id", localEnvId);
 
@@ -1012,10 +928,7 @@ async function handleRecreate(req: Request, user: AuthedUser): Promise<Response>
       "exec > >(tee -a /post_install.log) 2>&1",
       `export BASE_DOMAIN=${shellQuote(apexDomain)}`,
       `export LETSENCRYPT_EMAIL=${shellQuote(`admin@${apexDomain}`)}`,
-      `export LETSENCRYPT_PRODUCTION=${shellQuote(String(letsencryptProduction))}`,
-      `export LETSENCRYPT_STAGING=${shellQuote(String(letsencryptStaging))}`,
-      `export LETSENCRYPT_CA_SERVER=${shellQuote(letsencryptCaServer)}`,
-      `export SYNC_API_TOKEN=${shellQuote(syncApiToken)}`,
+      `export SYNC_API_DOMAIN=${shellQuote(hostname)}`,
       `export JRP_REPO_URL="https://github.com/bzalk/jrp-supabase.git"`,
       `export JRP_REPO_BRANCH="main"`,
       `export JRP_INSTALL_DIR="/opt/jrp-supabase"`,
@@ -1031,12 +944,9 @@ async function handleRecreate(req: Request, user: AuthedUser): Promise<Response>
     scriptContent = buildPostInstallScript(installUrl, {
       syncApiToken,
       hostname,
-      syncApiUrl,
+      syncApiUrl: `https://${hostname}`,
       apexDomain,
       subdomain: String(envRow.subdomain || ""),
-      letsencryptProduction,
-      letsencryptStaging,
-      letsencryptCaServer,
     });
   }
 
@@ -1418,12 +1328,7 @@ function execSshCommand(
 
 async function handleRepairSsl(req: Request, user: AuthedUser): Promise<Response> {
   try {
-    const body = (await req.json().catch(() => ({}))) as {
-      local_environment_id?: string;
-      letsencrypt_production?: boolean | string;
-      letsencrypt_staging?: boolean | string;
-      letsencrypt_ca_server?: string;
-    };
+    const body = (await req.json().catch(() => ({}))) as { local_environment_id?: string };
     const localEnvId = body.local_environment_id;
     if (!localEnvId) return jsonResponse({ error: "local_environment_id required" }, 400);
 
@@ -1437,9 +1342,6 @@ async function handleRepairSsl(req: Request, user: AuthedUser): Promise<Response
 
     const ip = envRow.vps_ip as string;
     const password = envRow.vps_root_password as string;
-    const letsencryptProduction = letsEncryptProduction(body.letsencrypt_production, body.letsencrypt_staging);
-    const letsencryptStaging = !letsencryptProduction;
-    const letsencryptCaServer = letsEncryptCaServer(letsencryptProduction, body.letsencrypt_ca_server);
     const sshCommand = `ssh root@${ip} 'curl -fsSL ${REPAIR_SSL_SCRIPT_URL} | bash'`;
 
     if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
@@ -1453,7 +1355,7 @@ async function handleRepairSsl(req: Request, user: AuthedUser): Promise<Response
     await recordEvent(user.client, user.id, localEnvId, "repair-ssl", 10,
       "Connecting to server via SSH to run SSL repair script", "running");
 
-    const command = `curl -fsSL ${shellQuote(REPAIR_SSL_SCRIPT_URL)} | LETSENCRYPT_PRODUCTION=${shellQuote(String(letsencryptProduction))} LETSENCRYPT_STAGING=${shellQuote(String(letsencryptStaging))} LETSENCRYPT_CA_SERVER=${shellQuote(letsencryptCaServer)} bash`;
+    const command = `curl -fsSL ${REPAIR_SSL_SCRIPT_URL} | bash`;
     let lastProgressUpdate = 0;
     const result = await execSshCommand(ip, password, command, (stdout) => {
       const now = Date.now();
@@ -1477,15 +1379,12 @@ async function handleRepairSsl(req: Request, user: AuthedUser): Promise<Response
         ssh_command: sshCommand,
       }, 200);
     } else {
-      const output = result.stdout + "\n" + result.stderr;
-      const rateLimitMessage = acmeRateLimitSummary(output);
-      const failureMessage = rateLimitMessage || `Repair script exited with code ${result.code}. Check the output below or run manually via SSH.`;
       await recordEvent(user.client, user.id, localEnvId, "repair-ssl", 80,
-        failureMessage, "failed", { stdout_tail: result.stdout.slice(-500), stderr_tail: result.stderr.slice(-500) });
+        `SSL repair script exited with code ${result.code}`, "failed", { stdout_tail: result.stdout.slice(-500), stderr_tail: result.stderr.slice(-500) });
       return jsonResponse({
         status: "failed",
-        message: failureMessage,
-        output: output.slice(-2000),
+        message: `Repair script exited with code ${result.code}. Check the output below or run manually via SSH.`,
+        output: (result.stdout + "\n" + result.stderr).slice(-2000),
         ssh_command: sshCommand,
       }, 200);
     }
@@ -1501,12 +1400,7 @@ const RESET_VPS_SCRIPT_URL = "https://raw.githubusercontent.com/bzalk/jrp-supaba
 
 async function handleResetVps(req: Request, user: AuthedUser): Promise<Response> {
   try {
-    const body = (await req.json().catch(() => ({}))) as {
-      local_environment_id?: string;
-      letsencrypt_production?: boolean | string;
-      letsencrypt_staging?: boolean | string;
-      letsencrypt_ca_server?: string;
-    };
+    const body = (await req.json().catch(() => ({}))) as { local_environment_id?: string };
     const localEnvId = body.local_environment_id;
     if (!localEnvId) return jsonResponse({ error: "local_environment_id required" }, 400);
 
@@ -1521,12 +1415,7 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
     const ip = envRow.vps_ip as string;
     const password = envRow.vps_root_password as string;
     const baseDomain = envRow.apex_domain as string;
-    const syncApiToken = generateSyncApiToken();
-    const syncApiUrl = syncApiUrlForApex(baseDomain || "");
-    const letsencryptProduction = letsEncryptProduction(body.letsencrypt_production, body.letsencrypt_staging);
-    const letsencryptStaging = !letsencryptProduction;
-    const letsencryptCaServer = letsEncryptCaServer(letsencryptProduction, body.letsencrypt_ca_server);
-    const sshCommand = `ssh root@${ip} 'curl -fsSL ${RESET_VPS_SCRIPT_URL} | SYNC_API_TOKEN=<fresh-token> bash -s -- ${baseDomain} --confirm CONFIRM'`;
+    const sshCommand = `ssh root@${ip} 'CONFIRM_RESET=RESET BASE_DOMAIN=${baseDomain} curl -fsSL ${RESET_VPS_SCRIPT_URL} | bash'`;
 
     if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
     if (!password) {
@@ -1537,243 +1426,45 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
     }
     if (!baseDomain) return jsonResponse({ error: "No apex_domain configured for this environment" }, 400);
 
-    await user.client.from("local_environments").update({
-      sync_api_token: syncApiToken,
-      sync_api_url: syncApiUrl,
-      updated_at: new Date().toISOString(),
-    }).eq("id", localEnvId);
-
     await recordEvent(user.client, user.id, localEnvId, "reset-vps", 5,
       "Connecting to server via SSH to run full VPS reset", "running");
 
-    const resetCommand = `set -o pipefail; rm -f /root/jrp-reset-vps-latest.exit; curl -fsSL ${shellQuote(RESET_VPS_SCRIPT_URL)} | SYNC_API_TOKEN=${shellQuote(syncApiToken)} LETSENCRYPT_PRODUCTION=${shellQuote(String(letsencryptProduction))} LETSENCRYPT_STAGING=${shellQuote(String(letsencryptStaging))} LETSENCRYPT_CA_SERVER=${shellQuote(letsencryptCaServer)} bash -s -- ${shellQuote(baseDomain)} --confirm CONFIRM; code=$?; echo "$code" > /root/jrp-reset-vps-latest.exit; exit "$code"`;
-    const command = [
-      "cd /",
-      "rm -f /root/jrp-reset-vps-latest.pid /root/jrp-reset-vps-latest.exit /root/jrp-reset-vps-launch.log",
-      `nohup bash -c ${shellQuote(resetCommand)} >/root/jrp-reset-vps-launch.log 2>&1 &`,
-      "pid=$!",
-      "echo \"$pid\" >/root/jrp-reset-vps-latest.pid",
-      "echo \"$pid\"",
-    ].join("\n");
-    const result = await execSshCommand(ip, password, command, undefined, 60_000);
-    if (result.code !== 0) {
-      await recordEvent(user.client, user.id, localEnvId, "reset-vps", 10,
-        `Failed to start VPS reset: exit code ${result.code}`, "failed", { stdout_tail: result.stdout.slice(-500), stderr_tail: result.stderr.slice(-500) });
+    const command = `CONFIRM_RESET=RESET BASE_DOMAIN=${shellQuote(baseDomain)} curl -fsSL ${RESET_VPS_SCRIPT_URL} | bash`;
+    let lastProgressUpdate = 0;
+    const result = await execSshCommand(ip, password, command, (stdout) => {
+      const now = Date.now();
+      if (now - lastProgressUpdate > 5000) {
+        lastProgressUpdate = now;
+        const lastLine = stdout.trim().split("\n").pop() || "";
+        EdgeRuntime.waitUntil(
+          recordEvent(user.client, user.id, localEnvId, "reset-vps", 50,
+            lastLine.slice(0, 150) || "Running reset script...", "running", { stdout_tail: stdout.slice(-400) })
+        );
+      }
+    }, 15 * 60 * 1000);
+
+    if (result.code === 0) {
+      await recordEvent(user.client, user.id, localEnvId, "reset-vps", 100,
+        "VPS reset completed successfully", "succeeded", { stdout_tail: result.stdout.slice(-500) });
+      return jsonResponse({
+        status: "completed",
+        message: "VPS reset and reinstall completed successfully.",
+        output: result.stdout.slice(-4000),
+        ssh_command: sshCommand,
+      }, 200);
+    } else {
+      await recordEvent(user.client, user.id, localEnvId, "reset-vps", 80,
+        `VPS reset script exited with code ${result.code}`, "failed", { stdout_tail: result.stdout.slice(-500), stderr_tail: result.stderr.slice(-500) });
       return jsonResponse({
         status: "failed",
-        message: `Failed to start reset script with exit code ${result.code}.`,
+        message: `Reset script exited with code ${result.code}. Check the output below or run manually via SSH.`,
         output: (result.stdout + "\n" + result.stderr).slice(-4000),
         ssh_command: sshCommand,
       }, 200);
     }
-
-    const pid = result.stdout.trim().split("\n").pop() || "";
-    await user.client.from("local_environments").update({
-      vps_status: "installing",
-      post_install_status: "running",
-      health_check_results: null,
-      last_health_check_at: null,
-      connection_mode: null,
-      updated_at: new Date().toISOString(),
-    }).eq("id", localEnvId);
-
-    await recordEvent(user.client, user.id, localEnvId, "reset-vps", 15,
-      "VPS reset started in the background", "running", { pid });
-    return jsonResponse({
-      status: "running",
-      message: "VPS reset started. Progress will update from the server log.",
-      output: result.stdout.slice(-2000),
-      ssh_command: sshCommand,
-    }, 202);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return jsonResponse({ error: message, ssh_command: "" }, 500);
-  }
-}
-
-async function handleResetVpsStatus(req: Request, user: AuthedUser): Promise<Response> {
-  try {
-    const body = (await req.json().catch(() => ({}))) as { local_environment_id?: string };
-    const localEnvId = body.local_environment_id;
-    if (!localEnvId) return jsonResponse({ error: "local_environment_id required" }, 400);
-
-    const { data: envRow } = await user.client
-      .from("local_environments")
-      .select("*")
-      .eq("id", localEnvId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (!envRow) return jsonResponse({ error: "Environment not found" }, 404);
-
-    const ip = envRow.vps_ip as string;
-    const password = envRow.vps_root_password as string;
-    if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
-    if (!password) return jsonResponse({ error: "No root password stored for this environment." }, 400);
-
-    const command = [
-      "pid=$(cat /root/jrp-reset-vps-latest.pid 2>/dev/null || true)",
-      "exit_code=$(cat /root/jrp-reset-vps-latest.exit 2>/dev/null || true)",
-      "running=false",
-      "if [ -n \"$pid\" ] && kill -0 \"$pid\" 2>/dev/null; then running=true; fi",
-      "echo __JRP_STATUS__",
-      "echo \"pid=$pid\"",
-      "echo \"running=$running\"",
-      "echo \"exit_code=$exit_code\"",
-      "echo __JRP_LOG__",
-      "tail -n 160 /root/jrp-reset-vps-latest.log 2>/dev/null || tail -n 160 /root/jrp-reset-vps-launch.log 2>/dev/null || true",
-    ].join("\n");
-    const result = await execSshCommand(ip, password, command, undefined, 60_000);
-    const output = result.stdout || "";
-    const statusBlock = output.split("__JRP_STATUS__")[1]?.split("__JRP_LOG__")[0] || "";
-    const log = output.split("__JRP_LOG__")[1]?.trim() || output.trim();
-    const running = /running=true/.test(statusBlock);
-    const exitCodeMatch = statusBlock.match(/exit_code=([0-9]+)/);
-    const exitCode = exitCodeMatch ? Number(exitCodeMatch[1]) : null;
-    const lastLine = log.trim().split("\n").filter(Boolean).pop() || "";
-
-    if (exitCode === 0 || /Reset completed/.test(log)) {
-      const syncApiUrl = syncApiUrlForApex(String(envRow.apex_domain || ""));
-      await user.client.from("local_environments").update({
-        post_install_status: "pending",
-        dns_a_record_verified_at: null,
-        health_check_results: null,
-        last_health_check_at: null,
-        sync_api_url: syncApiUrl,
-        connection_mode: null,
-        updated_at: new Date().toISOString(),
-      }).eq("id", localEnvId);
-      await user.client.from("local_environment_bindings")
-        .delete()
-        .eq("local_environment_id", localEnvId);
-      await recordEvent(user.client, user.id, localEnvId, "reset-vps", 100,
-        "VPS reset completed successfully", "succeeded", { stdout_tail: log.slice(-500), exit_code: exitCode });
-      return jsonResponse({
-        status: "completed",
-        message: "VPS reset and reinstall completed successfully.",
-        output: log.slice(-4000),
-        exit_code: exitCode,
-      }, 200);
-    }
-
-    if (exitCode !== null && exitCode !== 0) {
-      const rateLimitMessage = acmeRateLimitSummary(log);
-      const failureMessage = rateLimitMessage || `VPS reset failed with exit code ${exitCode}.`;
-      await user.client.from("local_environments").update({
-        vps_status: "failed",
-        post_install_status: "failed",
-        updated_at: new Date().toISOString(),
-      }).eq("id", localEnvId);
-      await recordEvent(user.client, user.id, localEnvId, "reset-vps", 95,
-        failureMessage, "failed", { stdout_tail: log.slice(-500), exit_code: exitCode });
-      return jsonResponse({
-        status: "failed",
-        message: failureMessage,
-        output: log.slice(-4000),
-        exit_code: exitCode,
-      }, 200);
-    }
-
-    const message = lastLine || (running ? "VPS reset is still running" : "Waiting for reset log output");
-    await recordEvent(user.client, user.id, localEnvId, "reset-vps", 50,
-      message.slice(0, 150), "running", { stdout_tail: log.slice(-500), running });
-    return jsonResponse({
-      status: "running",
-      message,
-      output: log.slice(-4000),
-      exit_code: null,
-    }, 200);
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return jsonResponse({ error: message }, 500);
-  }
-}
-
-// --- Repair Sync Token: SSH into server and update the sync-api bearer token ---
-
-async function handleRepairSyncToken(req: Request, user: AuthedUser): Promise<Response> {
-  try {
-    const body = (await req.json().catch(() => ({}))) as { local_environment_id?: string };
-    const localEnvId = body.local_environment_id;
-    if (!localEnvId) return jsonResponse({ error: "local_environment_id required" }, 400);
-
-    const { data: envRow } = await user.client
-      .from("local_environments")
-      .select("*")
-      .eq("id", localEnvId)
-      .eq("user_id", user.id)
-      .maybeSingle();
-    if (!envRow) return jsonResponse({ error: "Environment not found" }, 404);
-
-    const ip = envRow.vps_ip as string;
-    const password = envRow.vps_root_password as string;
-    if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
-    if (!password) return jsonResponse({ error: "No root password stored for this environment." }, 400);
-
-    // Use existing token or generate a new one
-    let syncApiToken = String(envRow.sync_api_token || "");
-    if (!syncApiToken) {
-      syncApiToken = generateSyncApiToken();
-      await user.client.from("local_environments").update({
-        sync_api_token: syncApiToken,
-        updated_at: new Date().toISOString(),
-      }).eq("id", localEnvId);
-    }
-
-    await recordEvent(user.client, user.id, localEnvId, "repair-sync-token", 10,
-      "Connecting to server via SSH to update sync-api token", "running");
-
-    // Update the token in the sync-api .env file and restart the service
-    const script = [
-      `TOKEN=${shellQuote(syncApiToken)}`,
-      // Try common locations for the sync-api env/config
-      `for ENV_FILE in /opt/jrp-supabase/.env /opt/sync-api/.env /etc/sync-api/.env; do`,
-      `  if [ -f "$ENV_FILE" ]; then`,
-      `    if grep -q "^SYNC_API_TOKEN=" "$ENV_FILE" 2>/dev/null; then`,
-      `      sed -i "s|^SYNC_API_TOKEN=.*|SYNC_API_TOKEN=$TOKEN|" "$ENV_FILE"`,
-      `    else`,
-      `      echo "SYNC_API_TOKEN=$TOKEN" >> "$ENV_FILE"`,
-      `    fi`,
-      `    echo "Updated $ENV_FILE"`,
-      `  fi`,
-      `done`,
-      // Also update docker-compose env if present
-      `if [ -f /opt/jrp-supabase/docker-compose.yml ]; then`,
-      `  cd /opt/jrp-supabase`,
-      `  if docker compose ps sync-api --format json 2>/dev/null | grep -q running; then`,
-      `    docker compose restart sync-api && echo "Restarted sync-api container"`,
-      `  elif systemctl is-active sync-api >/dev/null 2>&1; then`,
-      `    systemctl restart sync-api && echo "Restarted sync-api service"`,
-      `  else`,
-      `    echo "Could not find running sync-api to restart"`,
-      `  fi`,
-      `elif systemctl is-active sync-api >/dev/null 2>&1; then`,
-      `  systemctl restart sync-api && echo "Restarted sync-api service"`,
-      `fi`,
-      `echo "DONE"`,
-    ].join("\n");
-
-    const result = await execSshCommand(ip, password, script, undefined, 60_000);
-
-    if (result.code === 0 && result.stdout.includes("DONE")) {
-      await recordEvent(user.client, user.id, localEnvId, "repair-sync-token", 100,
-        "Sync API token updated successfully", "succeeded", { stdout_tail: result.stdout.slice(-300) });
-      return jsonResponse({
-        status: "completed",
-        message: "Sync API token has been updated on the server.",
-        output: result.stdout.slice(-2000),
-      }, 200);
-    } else {
-      await recordEvent(user.client, user.id, localEnvId, "repair-sync-token", 80,
-        `Token update exited with code ${result.code}`, "failed", { stdout_tail: result.stdout.slice(-300), stderr_tail: result.stderr.slice(-300) });
-      return jsonResponse({
-        status: "failed",
-        message: `Token repair exited with code ${result.code}.`,
-        output: (result.stdout + "\n" + result.stderr).slice(-2000),
-      }, 200);
-    }
-  } catch (err) {
-    const message = err instanceof Error ? err.message : "Unknown error";
-    return jsonResponse({ error: message }, 500);
   }
 }
 
@@ -1854,16 +1545,6 @@ Deno.serve(async (req: Request) => {
       const auth = await authenticate(req);
       if (auth instanceof Response) return auth;
       return await handleResetVps(req, auth);
-    }
-    if (op === "reset-vps-status" && req.method === "POST") {
-      const auth = await authenticate(req);
-      if (auth instanceof Response) return auth;
-      return await handleResetVpsStatus(req, auth);
-    }
-    if (op === "repair-sync-token" && req.method === "POST") {
-      const auth = await authenticate(req);
-      if (auth instanceof Response) return auth;
-      return await handleRepairSyncToken(req, auth);
     }
     return jsonResponse({ error: "Unknown operation" }, 404);
   } catch (err) {
