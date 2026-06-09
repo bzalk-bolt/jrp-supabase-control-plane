@@ -3,12 +3,14 @@ import { useParams, useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft, Database, ArrowLeftRight, AlertTriangle, RotateCcw, Trash2, X, ExternalLink } from 'lucide-react';
 import { syncApi } from '../services';
 import type { Environment, EnvironmentIdentity } from '../types/api';
+import { useEnvironments } from '../contexts/EnvironmentsContext';
 import ResetConfirmModal from '../components/ResetConfirmModal';
 import AppLoadingSkeleton from '../components/AppLoadingSkeleton';
 
 export default function EnvironmentDetail() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
+  const { meta } = useEnvironments();
 
   const [environment, setEnvironment] = useState<Environment | null>(null);
   const [identity, setIdentity] = useState<EnvironmentIdentity | null>(null);
@@ -23,21 +25,30 @@ export default function EnvironmentDetail() {
   const sourceProject = identity?.projects.find(p => p.role === 'source');
   const targetProject = identity?.projects.find(p => p.role === 'target');
 
+  function getLocalEnvId(): string | undefined {
+    if (!name) return undefined;
+    const envMeta = meta[name];
+    return envMeta?.source === 'self-hosted' && envMeta.localEnvironmentId
+      ? envMeta.localEnvironmentId
+      : undefined;
+  }
+
   useEffect(() => {
     if (!name) return;
     setLoading(true);
+    const localEnvId = getLocalEnvId();
     Promise.all([
-      syncApi.getEnvironment(name).then(env => { setEnvironment(env); return env; }),
-      syncApi.getEnvironmentIdentity(name).then(id => { setIdentity(id); return id; }).catch(() => null),
+      syncApi.getEnvironment(name, localEnvId).then(env => { setEnvironment(env); return env; }),
+      syncApi.getEnvironmentIdentity(name, localEnvId).then(id => { setIdentity(id); return id; }).catch(() => null),
     ])
       .catch(e => setError(e instanceof Error ? e.message : 'Failed to load'))
       .finally(() => setLoading(false));
-  }, [name]);
+  }, [name, meta]);
 
   async function handleDelete() {
     if (!name) return;
     try {
-      await syncApi.deleteEnvironment(name);
+      await syncApi.deleteEnvironment(name, getLocalEnvId());
       navigate('/environments');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Delete failed');
@@ -47,12 +58,13 @@ export default function EnvironmentDetail() {
   async function handleReset() {
     if (!name || !resetDirection) return;
     const confirmValue = resetDirection === 'destination' ? 'RESET DESTINATION' : 'RESET SOURCE';
+    const localEnvId = getLocalEnvId();
     try {
       setResetLoading(true);
       setError('');
       const job = resetDirection === 'destination'
-        ? await syncApi.resetDestination(name, { confirm: confirmValue })
-        : await syncApi.resetSource(name, { confirm: confirmValue });
+        ? await syncApi.resetDestination(name, { confirm: confirmValue }, localEnvId)
+        : await syncApi.resetSource(name, { confirm: confirmValue }, localEnvId);
       setResetDirection(null);
       setActiveJobId(job.id);
       setActiveJobLabel(`Reset ${resetDirection}`);

@@ -129,13 +129,13 @@ export async function listEnvironments(): Promise<Environment[]> {
   return data.environments;
 }
 
-export async function getEnvironment(name: string): Promise<Environment> {
-  const data = await request<{ environment: Environment }>(`/v1/environments/${encodeURIComponent(name)}`);
+export async function getEnvironment(name: string, localEnvironmentId?: string): Promise<Environment> {
+  const data = await request<{ environment: Environment }>(`/v1/environments/${encodeURIComponent(name)}`, { localEnvironmentId });
   return data.environment;
 }
 
-export async function getEnvironmentIdentity(name: string): Promise<EnvironmentIdentity> {
-  return request<EnvironmentIdentity>(`/v1/environments/${encodeURIComponent(name)}/identity`);
+export async function getEnvironmentIdentity(name: string, localEnvironmentId?: string): Promise<EnvironmentIdentity> {
+  return request<EnvironmentIdentity>(`/v1/environments/${encodeURIComponent(name)}/identity`, { localEnvironmentId });
 }
 
 export async function createEnvironment(env: EnvironmentCreateRequest): Promise<Environment> {
@@ -146,33 +146,37 @@ export async function createEnvironment(env: EnvironmentCreateRequest): Promise<
   return data.environment;
 }
 
-export async function deleteEnvironment(name: string): Promise<Environment> {
+export async function deleteEnvironment(name: string, localEnvironmentId?: string): Promise<Environment> {
   const data = await request<{ environment: Environment }>(`/v1/environments/${encodeURIComponent(name)}`, {
     method: 'DELETE',
+    localEnvironmentId,
   });
   return data.environment;
 }
 
-export async function planMigrations(name: string, options?: JobOptions): Promise<Job> {
+export async function planMigrations(name: string, options?: JobOptions, localEnvironmentId?: string): Promise<Job> {
   const data = await request<{ job: Job }>(`/v1/environments/${encodeURIComponent(name)}/migrations/plan`, {
     method: 'POST',
     body: options ? JSON.stringify(options) : undefined,
+    localEnvironmentId,
   });
   return data.job;
 }
 
-export async function applyMigrations(name: string, options?: JobOptions): Promise<Job> {
+export async function applyMigrations(name: string, options?: JobOptions, localEnvironmentId?: string): Promise<Job> {
   const data = await request<{ job: Job }>(`/v1/environments/${encodeURIComponent(name)}/migrations/up`, {
     method: 'POST',
     body: options ? JSON.stringify(options) : undefined,
+    localEnvironmentId,
   });
   return data.job;
 }
 
-export async function validateEnvironment(name: string, options?: JobOptions): Promise<Job> {
+export async function validateEnvironment(name: string, options?: JobOptions, localEnvironmentId?: string): Promise<Job> {
   const data = await request<{ job: Job }>(`/v1/environments/${encodeURIComponent(name)}/validate`, {
     method: 'POST',
     body: options ? JSON.stringify(options) : undefined,
+    localEnvironmentId,
   });
   return data.job;
 }
@@ -187,34 +191,34 @@ export async function getJob(id: string, localEnvironmentId?: string): Promise<J
   return data.job;
 }
 
-export async function getEnvironmentStats(name: string, exactRows = false): Promise<DatabaseStatsResponse> {
+export async function getEnvironmentStats(name: string, exactRows = false, localEnvironmentId?: string): Promise<DatabaseStatsResponse> {
   const params = new URLSearchParams();
   if (exactRows) params.set('exact_rows', 'true');
   params.set('include_columns', 'true');
-  return request<DatabaseStatsResponse>(`/v1/environments/${encodeURIComponent(name)}/stats?${params.toString()}`);
+  return request<DatabaseStatsResponse>(`/v1/environments/${encodeURIComponent(name)}/stats?${params.toString()}`, { localEnvironmentId });
 }
 
-export async function getTableStats(envName: string, schema: string, table: string, exactRows = false): Promise<TableStatsResponse> {
+export async function getTableStats(envName: string, schema: string, table: string, exactRows = false, localEnvironmentId?: string): Promise<TableStatsResponse> {
   const params = new URLSearchParams({ schema, table });
   if (exactRows) params.set('exact_rows', 'true');
-  return request<TableStatsResponse>(`/v1/environments/${encodeURIComponent(envName)}/table-stats?${params.toString()}`);
+  return request<TableStatsResponse>(`/v1/environments/${encodeURIComponent(envName)}/table-stats?${params.toString()}`, { localEnvironmentId });
 }
 
-export async function getEdgeFunctions(envName: string): Promise<EdgeFunctionsResponse> {
-  return request<EdgeFunctionsResponse>(`/v1/environments/${encodeURIComponent(envName)}/edge-functions`);
+export async function getEdgeFunctions(envName: string, localEnvironmentId?: string): Promise<EdgeFunctionsResponse> {
+  return request<EdgeFunctionsResponse>(`/v1/environments/${encodeURIComponent(envName)}/edge-functions`, { localEnvironmentId });
 }
 
-export async function getEdgeFunctionSource(envName: string, id: string): Promise<EdgeFunctionDetailResponse> {
-  return request<EdgeFunctionDetailResponse>(`/v1/environments/${encodeURIComponent(envName)}/edge-functions/${encodeURIComponent(id)}/source`);
+export async function getEdgeFunctionSource(envName: string, id: string, localEnvironmentId?: string): Promise<EdgeFunctionDetailResponse> {
+  return request<EdgeFunctionDetailResponse>(`/v1/environments/${encodeURIComponent(envName)}/edge-functions/${encodeURIComponent(id)}/source`, { localEnvironmentId });
 }
 
-export async function getDatabaseFunctions(envName: string): Promise<DatabaseFunctionsResponse> {
-  return request<DatabaseFunctionsResponse>(`/v1/environments/${encodeURIComponent(envName)}/database-functions`);
+export async function getDatabaseFunctions(envName: string, localEnvironmentId?: string): Promise<DatabaseFunctionsResponse> {
+  return request<DatabaseFunctionsResponse>(`/v1/environments/${encodeURIComponent(envName)}/database-functions`, { localEnvironmentId });
 }
 
-export async function getDatabaseTriggers(envName: string, includeInternal = false): Promise<DatabaseTriggersResponse> {
+export async function getDatabaseTriggers(envName: string, includeInternal = false, localEnvironmentId?: string): Promise<DatabaseTriggersResponse> {
   const params = includeInternal ? '?include_internal=true' : '';
-  return request<DatabaseTriggersResponse>(`/v1/environments/${encodeURIComponent(envName)}/database-triggers${params}`);
+  return request<DatabaseTriggersResponse>(`/v1/environments/${encodeURIComponent(envName)}/database-triggers${params}`, { localEnvironmentId });
 }
 
 export async function resetDestination(envName: string, options: ResetOptions, localEnvironmentId?: string): Promise<Job> {
@@ -226,10 +230,11 @@ export async function resetDestination(envName: string, options: ResetOptions, l
   return data.job;
 }
 
-export async function resetSource(envName: string, options: ResetOptions): Promise<Job> {
+export async function resetSource(envName: string, options: ResetOptions, localEnvironmentId?: string): Promise<Job> {
   const data = await request<{ job: Job }>(`/v1/environments/${encodeURIComponent(envName)}/reset/source`, {
     method: 'POST',
     body: JSON.stringify(options),
+    localEnvironmentId,
   });
   return data.job;
 }
@@ -300,9 +305,9 @@ export async function mergeBranch(name: string, options?: BranchMergeRequest): P
   return res.job;
 }
 
-export async function pollJob(jobId: string): Promise<Job> {
+export async function pollJob(jobId: string, localEnvironmentId?: string): Promise<Job> {
   while (true) {
-    const job = await getJob(jobId);
+    const job = await getJob(jobId, localEnvironmentId);
     if (job.status === 'succeeded' || job.status === 'failed') return job;
     await new Promise(r => setTimeout(r, 1500));
   }
@@ -310,12 +315,12 @@ export async function pollJob(jobId: string): Promise<Job> {
 
 // --- Migrations ---
 
-export async function listMigrations(envName: string): Promise<MigrationsListResponse> {
-  return request<MigrationsListResponse>(`/v1/environments/${encodeURIComponent(envName)}/migrations`);
+export async function listMigrations(envName: string, localEnvironmentId?: string): Promise<MigrationsListResponse> {
+  return request<MigrationsListResponse>(`/v1/environments/${encodeURIComponent(envName)}/migrations`, { localEnvironmentId });
 }
 
-export async function getMigrationDetail(envName: string, version: string): Promise<MigrationDetailResponse> {
-  return request<MigrationDetailResponse>(`/v1/environments/${encodeURIComponent(envName)}/migrations/${encodeURIComponent(version)}`);
+export async function getMigrationDetail(envName: string, version: string, localEnvironmentId?: string): Promise<MigrationDetailResponse> {
+  return request<MigrationDetailResponse>(`/v1/environments/${encodeURIComponent(envName)}/migrations/${encodeURIComponent(version)}`, { localEnvironmentId });
 }
 
 // --- Supabase Account Discovery ---

@@ -26,7 +26,7 @@ interface EnvStats {
 }
 
 export default function Dashboard() {
-  const { environments, identities } = useEnvironments();
+  const { environments, identities, meta } = useEnvironments();
   const [loading, setLoading] = useState(true);
   const [envStats, setEnvStats] = useState<EnvStats[]>([]);
   const [selectedEnvs, setSelectedEnvs] = useState<Set<string>>(new Set());
@@ -42,7 +42,13 @@ export default function Dashboard() {
     async function loadStats() {
       try {
         const statsResults = await Promise.allSettled(
-          environments.map(env => syncApi.getEnvironmentStats(env.name, true).then(stats => ({ name: env.name, stats })))
+          environments.map(env => {
+            const envMeta = meta[env.name];
+            const localEnvId = envMeta?.source === 'self-hosted' && envMeta.localEnvironmentId
+              ? envMeta.localEnvironmentId
+              : undefined;
+            return syncApi.getEnvironmentStats(env.name, true, localEnvId).then(stats => ({ name: env.name, stats }));
+          })
         );
         const fulfilled = statsResults
           .filter((r): r is PromiseFulfilledResult<EnvStats> => r.status === 'fulfilled')
@@ -53,7 +59,7 @@ export default function Dashboard() {
       }
     }
     loadStats();
-  }, [environments]);
+  }, [environments, meta]);
 
   const filteredStats = useMemo(() => {
     return envStats.filter(es => selectedEnvs.has(es.name));
