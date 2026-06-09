@@ -145,36 +145,89 @@ export default function EnvironmentDetail() {
       )}
 
       {/* Configuration */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-800">
-          <h2 className="text-sm font-semibold text-gray-200">Configuration</h2>
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+        {/* Source */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
+            <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Source</h2>
+            <span className="text-xs font-mono text-emerald-400 bg-emerald-400/10 px-2 py-0.5 rounded">{environment.source_env}</span>
+          </div>
+          <div className="divide-y divide-gray-800/60">
+            {sourceProject && (
+              <>
+                <ConfigRow label="Project" value={sourceProject.name} />
+                {sourceProject.organization_name && (
+                  <ConfigRow label="Organization" value={sourceProject.organization_name} />
+                )}
+                {sourceProject.project_ref && (
+                  <ConfigRow label="Project Ref" value={sourceProject.project_ref} mono />
+                )}
+                {sourceProject.project_ref && (
+                  <ConfigRow
+                    label="Supabase URL"
+                    value={`https://${sourceProject.project_ref}.supabase.co`}
+                    mono
+                    href={`https://supabase.com/dashboard/project/${sourceProject.project_ref}`}
+                  />
+                )}
+              </>
+            )}
+            {environment.source_container && (
+              <ConfigRow label="Container" value={environment.source_container} mono />
+            )}
+            {environment.source_db_url && (
+              <ConfigRow label="DB Connection" value={environment.source_db_url} mono />
+            )}
+          </div>
         </div>
-        <div className="divide-y divide-gray-800">
-          {sourceProject && (
-            <ConfigRow label="Source Project" value={`${sourceProject.name}${sourceProject.organization_name ? ` (${sourceProject.organization_name})` : ''}`} />
-          )}
-          {environment.source_container && (
-            <ConfigRow label="Source Container" value={environment.source_container} />
-          )}
-          {environment.source_db_url && (
-            <ConfigRow label="Source DB URL" value={environment.source_db_url} mono />
-          )}
-          {targetProject && (
-            <ConfigRow label="Target Project" value={`${targetProject.name}${targetProject.organization_name ? ` (${targetProject.organization_name})` : ''}`} />
-          )}
-          {environment.target_container && (
-            <ConfigRow label="Target Container" value={environment.target_container} />
-          )}
-          {environment.target_db_url && (
-            <ConfigRow label="Target DB URL" value={environment.target_db_url} mono />
-          )}
-          <ConfigRow label="Source Environment" value={environment.source_env} />
-          <ConfigRow label="Target Environment" value={environment.target_env} />
-          {environment.sync_storage_buckets !== undefined && (
-            <ConfigRow label="Sync Storage Buckets" value={environment.sync_storage_buckets !== false ? 'Yes' : 'No'} />
-          )}
+
+        {/* Target */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
+            <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Target</h2>
+            <span className="text-xs font-mono text-blue-400 bg-blue-400/10 px-2 py-0.5 rounded">{environment.target_env}</span>
+          </div>
+          <div className="divide-y divide-gray-800/60">
+            {targetProject && (
+              <>
+                <ConfigRow label="Project" value={targetProject.name} />
+                {targetProject.organization_name && (
+                  <ConfigRow label="Organization" value={targetProject.organization_name} />
+                )}
+                {targetProject.project_ref && (
+                  <ConfigRow label="Project Ref" value={targetProject.project_ref} mono />
+                )}
+                {targetProject.project_ref && (
+                  <ConfigRow
+                    label="Supabase URL"
+                    value={`https://${targetProject.project_ref}.supabase.co`}
+                    mono
+                    href={`https://supabase.com/dashboard/project/${targetProject.project_ref}`}
+                  />
+                )}
+              </>
+            )}
+            {environment.target_container && (
+              <ConfigRow label="Container" value={environment.target_container} mono />
+            )}
+            {environment.target_db_url && (
+              <ConfigRow label="DB Connection" value={environment.target_db_url} mono />
+            )}
+          </div>
         </div>
       </div>
+
+      {/* Sync Settings */}
+      {environment.sync_storage_buckets !== undefined && (
+        <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div className="px-5 py-3 border-b border-gray-800">
+            <h2 className="text-xs font-semibold text-gray-400 uppercase tracking-wider">Sync Settings</h2>
+          </div>
+          <div className="divide-y divide-gray-800/60">
+            <ConfigRow label="Storage Buckets" value={environment.sync_storage_buckets !== false ? 'Enabled' : 'Disabled'} />
+          </div>
+        </div>
+      )}
 
       {/* Danger Zone */}
       <div className="bg-gray-900 border border-red-500/30 rounded-xl overflow-hidden">
@@ -282,11 +335,23 @@ export default function EnvironmentDetail() {
   );
 }
 
-function ConfigRow({ label, value, mono }: { label: string; value: string; mono?: boolean }) {
+function ConfigRow({ label, value, mono, href }: { label: string; value: string; mono?: boolean; href?: string }) {
   return (
-    <div className="flex items-center justify-between px-5 py-3">
-      <span className="text-sm text-gray-400">{label}</span>
-      <span className={`text-sm text-gray-200 max-w-sm truncate ${mono ? 'font-mono text-xs' : ''}`}>{value}</span>
+    <div className="flex items-center justify-between px-5 py-2.5 gap-4">
+      <span className="text-sm text-gray-400 shrink-0">{label}</span>
+      {href ? (
+        <a
+          href={href}
+          target="_blank"
+          rel="noopener noreferrer"
+          className={`text-sm text-blue-400 hover:text-blue-300 truncate transition-colors ${mono ? 'font-mono text-xs' : ''}`}
+          title={value}
+        >
+          {value}
+        </a>
+      ) : (
+        <span className={`text-sm text-gray-200 truncate ${mono ? 'font-mono text-xs' : ''}`} title={value}>{value}</span>
+      )}
     </div>
   );
 }
