@@ -247,6 +247,25 @@ export async function createBinding(input: {
   return data as LocalEnvironmentBinding;
 }
 
+export async function updateBinding(id: string, input: {
+  database_mode?: string;
+  remote_db_url?: string;
+}): Promise<LocalEnvironmentBinding> {
+  const updateRow: Record<string, unknown> = {};
+  if (input.database_mode !== undefined) updateRow.database_mode = input.database_mode;
+  if (input.remote_db_url !== undefined) updateRow.remote_db_url = input.remote_db_url;
+
+  const { data, error } = await supabase
+    .from('local_environment_bindings')
+    .update(updateRow)
+    .eq('id', id)
+    .select()
+    .maybeSingle();
+  if (error) throw error;
+  if (!data) throw new Error('Binding not found');
+  return data as LocalEnvironmentBinding;
+}
+
 export async function deleteBinding(id: string): Promise<void> {
   const { error } = await supabase
     .from('local_environment_bindings')

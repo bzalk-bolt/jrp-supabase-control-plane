@@ -2,6 +2,7 @@ import { createContext, useContext, useEffect, useState, useCallback } from 'rea
 import { syncApi, localEnvironmentsService } from '../services';
 import type { Environment, EnvironmentProject, LocalEnvironmentBinding } from '../types/api';
 import AppLoadingSkeleton from '../components/AppLoadingSkeleton';
+import { getSyncEnvironmentName } from '../utils/syncEnvironmentName';
 
 export type EnvironmentSource = 'cloud' | 'self-hosted';
 
@@ -74,7 +75,7 @@ export function EnvironmentsProvider({ children }: { children: React.ReactNode }
             const localEnv = localEnvsList.find(le => le.id === binding.local_environment_id);
             if (!localEnv || !localEnv.sync_api_url) return [];
 
-            const envName = `${localEnv.name || localEnv.apex_domain}-main`;
+            const envName = getSyncEnvironmentName(localEnv);
 
             try {
               const remoteEnvs = await syncApi.listEnvironmentsFor(binding.local_environment_id);

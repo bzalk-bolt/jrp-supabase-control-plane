@@ -109,11 +109,16 @@ export interface Job extends JobSummary {
 export interface PlatformToLocalImportRequest {
   confirm?: string;
   dry_run?: boolean;
+  name?: string;
+  environment?: string;
   database_mode: 'schema-only' | 'schema-and-data';
   include_storage_bucket_metadata?: boolean;
   include_storage_objects?: boolean;
   include_edge_functions?: boolean;
   include_auth_data?: boolean;
+  reset_database?: boolean;
+  clear_branches?: boolean;
+  create_main_branch?: boolean;
   source: ImportSide;
   target: ImportSide;
 }
