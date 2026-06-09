@@ -132,6 +132,7 @@ function ServerOverviewSection({ env }: { env: LocalEnvironment }) {
   const [loadingVm, setLoadingVm] = useState(false);
   const [copied, setCopied] = useState('');
   const [expanded, setExpanded] = useState(false);
+  const serviceBase = localEnvironmentsService.serviceBaseDomain(env);
 
   useEffect(() => {
     if (!env.vps_id) return;
@@ -166,7 +167,7 @@ function ServerOverviewSection({ env }: { env: LocalEnvironment }) {
         <div className="px-5 pb-5">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
             <InfoRow label="Apex Domain" value={env.apex_domain} mono />
-            <InfoRow label="Service Hosts" value={env.apex_domain ? `supabase / studio / auth / sync-api .${env.apex_domain}` : ''} mono />
+            <InfoRow label="Service Hosts" value={serviceBase ? `supabase / studio / auth / sync-api .${serviceBase}` : ''} mono />
             <div className="flex items-center gap-2">
               <InfoRow label="Server IP" value={env.vps_ip} mono />
               {env.vps_ip && (
@@ -241,7 +242,9 @@ function SetupProgressSection({ env, onChange }: { env: LocalEnvironment; onChan
       try {
         await vpsProvisionService.pollProvision(env.id);
         await onChange();
-      } catch {}
+      } catch (err) {
+        void err;
+      }
       if (!stoppedRef.current) {
         timer = setTimeout(tick, 6000);
       }
@@ -1045,15 +1048,15 @@ function DnsSetupPanel({ env, onChange }: { env: LocalEnvironment; onChange: () 
   const [tokenSaving, setTokenSaving] = useState(false);
   const [configResults, setConfigResults] = useState<Array<{ hostname: string; status: string; message?: string }>>([]);
 
-  const apexDomain = env.apex_domain;
+  const baseDomain = localEnvironmentsService.serviceBaseDomain(env);
   const ip = env.vps_ip;
   const records = [
-    { type: 'A', name: env.full_hostname, value: ip },
-    { type: 'A', name: `supabase.${apexDomain}`, value: ip },
-    { type: 'A', name: `studio.${apexDomain}`, value: ip },
-    { type: 'A', name: `auth.${apexDomain}`, value: ip },
-    { type: 'A', name: `sync-api.${apexDomain}`, value: ip },
-  ];
+    { type: 'A', name: baseDomain, value: ip },
+    { type: 'A', name: localEnvironmentsService.serviceHostname('supabase', env), value: ip },
+    { type: 'A', name: localEnvironmentsService.serviceHostname('studio', env), value: ip },
+    { type: 'A', name: localEnvironmentsService.serviceHostname('auth', env), value: ip },
+    { type: 'A', name: localEnvironmentsService.serviceHostname('sync-api', env), value: ip },
+  ].filter(record => record.name);
 
   useEffect(() => {
     settingsService.getProviderConfig().then(cfg => {
@@ -1139,7 +1142,7 @@ function DnsSetupPanel({ env, onChange }: { env: LocalEnvironment; onChange: () 
           Configure DNS A Records
         </h3>
         <p className="text-xs text-gray-400 mt-1">
-          Point <span className="font-mono text-gray-300">{env.full_hostname}</span> and service subdomains to <span className="font-mono text-gray-300">{ip}</span>.
+          Point <span className="font-mono text-gray-300">{baseDomain}</span> and service subdomains to <span className="font-mono text-gray-300">{ip}</span>.
         </p>
       </div>
 
@@ -1200,7 +1203,7 @@ function DnsSetupPanel({ env, onChange }: { env: LocalEnvironment; onChange: () 
               </div>
 
               <p className="text-xs text-gray-400">
-                This will create A records in your Netlify DNS zone for <span className="font-mono text-gray-300">{apexDomain}</span> pointing to <span className="font-mono text-gray-300">{ip}</span>.
+                This will create A records in your Netlify DNS zone for <span className="font-mono text-gray-300">{baseDomain}</span> pointing to <span className="font-mono text-gray-300">{ip}</span>.
                 Existing records will be left untouched.
               </p>
 

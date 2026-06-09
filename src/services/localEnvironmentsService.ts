@@ -51,6 +51,27 @@ export function composeFullHostname(subdomain: string, apex: string): string {
   return `${sub}.${root}`;
 }
 
+export function serviceBaseDomain(env: { apex_domain?: string | null; subdomain?: string | null; full_hostname?: string | null }): string {
+  const apex = (env.apex_domain || '').trim().toLowerCase();
+  const sub = (env.subdomain || '').trim().toLowerCase();
+  const full = (env.full_hostname || '').trim().toLowerCase();
+  if (sub) return full || composeFullHostname(sub, apex);
+  return apex || full;
+}
+
+export function serviceHostname(
+  service: 'supabase' | 'studio' | 'auth' | 'sync-api',
+  env: { apex_domain?: string | null; subdomain?: string | null; full_hostname?: string | null }
+): string {
+  const base = serviceBaseDomain(env);
+  return base ? `${service}.${base}` : '';
+}
+
+export function syncApiUrlForEnvironment(env: { apex_domain?: string | null; subdomain?: string | null; full_hostname?: string | null }): string {
+  const hostname = serviceHostname('sync-api', env);
+  return hostname ? `https://${hostname}` : '';
+}
+
 // --- Local environments ---
 
 export async function listLocalEnvironments(): Promise<LocalEnvironment[]> {
