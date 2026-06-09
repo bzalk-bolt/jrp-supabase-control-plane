@@ -183,7 +183,13 @@ function redactDiagnostics(value: string): string {
     .replace(/(DASHBOARD_PASSWORD=)[^\s'"]+/g, "$1[redacted]")
     .replace(/(SECRET_KEY_BASE=)[^\s'"]+/g, "$1[redacted]")
     .replace(/(VAULT_ENC_KEY=)[^\s'"]+/g, "$1[redacted]")
+    .replace(/(PG_META_CRYPTO_KEY=)[^\s'"]+/g, "$1[redacted]")
     .replace(/(LOGFLARE_API_KEY=)[^\s'"]+/g, "$1[redacted]")
+    .replace(/(LOGFLARE_PUBLIC_ACCESS_TOKEN=)[^\s'"]+/g, "$1[redacted]")
+    .replace(/(LOGFLARE_PRIVATE_ACCESS_TOKEN=)[^\s'"]+/g, "$1[redacted]")
+    .replace(/(S3_PROTOCOL_ACCESS_KEY_ID=)[^\s'"]+/g, "$1[redacted]")
+    .replace(/(S3_PROTOCOL_ACCESS_KEY_SECRET=)[^\s'"]+/g, "$1[redacted]")
+    .replace(/(MINIO_ROOT_PASSWORD=)[^\s'"]+/g, "$1[redacted]")
     .replace(/(SUPABASE_AUTH_EXTERNAL_[A-Z0-9_]*SECRET=)[^\s'"]+/g, "$1[redacted]")
     .replace(/postgresql:\/\/([^:\s]+):([^@\s]+)@/g, "postgresql://$1:[redacted]@")
     .replace(/Bearer\s+[A-Za-z0-9._~+/=-]{20,}/g, "Bearer [redacted]");
