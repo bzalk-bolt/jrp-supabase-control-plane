@@ -1440,19 +1440,16 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
 
     const resetCommand = [
       "set -o pipefail",
-      "rm -f /root/jrp-reset-vps-latest.pid /root/jrp-reset-vps-latest.exit /root/jrp-reset-vps-ssh.log",
       `curl -fsSL ${shellQuote(RESET_VPS_SCRIPT_URL)} | SYNC_API_TOKEN=${shellQuote(syncApiToken)} LETSENCRYPT_PRODUCTION=false bash -s -- ${shellQuote(baseDomain)} --confirm CONFIRM`,
       "code=$?",
       "echo \"$code\" > /root/jrp-reset-vps-latest.exit",
       "exit \"$code\"",
     ].join("; ");
-    const command = [
-      "cd /",
-      `nohup bash -lc ${shellQuote(resetCommand)} >/root/jrp-reset-vps-ssh.log 2>&1 < /dev/null &`,
-      "pid=$!",
-      "echo \"$pid\" > /root/jrp-reset-vps-latest.pid",
-      "echo \"started pid=$pid log=/root/jrp-reset-vps-ssh.log latest=/root/jrp-reset-vps-latest.log\"",
-    ].join("; ");
+    const command =
+      `cd /; rm -f /root/jrp-reset-vps-latest.pid /root/jrp-reset-vps-latest.exit /root/jrp-reset-vps-ssh.log; ` +
+      `nohup bash -lc ${shellQuote(resetCommand)} >/root/jrp-reset-vps-ssh.log 2>&1 < /dev/null ` +
+      `& pid=$!; echo "$pid" > /root/jrp-reset-vps-latest.pid; ` +
+      `echo "started pid=$pid log=/root/jrp-reset-vps-ssh.log latest=/root/jrp-reset-vps-latest.log"`;
     const result = await execSshCommand(ip, password, command, undefined, 30_000);
 
     if (result.code !== 0) {
