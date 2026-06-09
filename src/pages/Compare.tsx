@@ -22,6 +22,10 @@ const LAST_ENV_KEY = 'syncdb_compare_last_env';
 
 type TabId = 'tables' | 'system-tables' | 'edge-functions' | 'db-functions' | 'table-triggers' | 'event-triggers' | 'storage' | 'migrations';
 
+const VALID_TABS: TabId[] = ['tables', 'system-tables', 'edge-functions', 'db-functions', 'table-triggers', 'event-triggers', 'storage', 'migrations'];
+const VALID_VIEW_MODES = ['diffs', 'no-source', 'no-target', 'all'] as const;
+type TableViewMode = typeof VALID_VIEW_MODES[number];
+
 export default function Compare() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
@@ -39,12 +43,33 @@ export default function Compare() {
   // Branch state
   const [branchData, setBranchData] = useState<BranchesResponse | null>(null);
   const [switching, setSwitching] = useState(false);
-  const [activeTab, setActiveTab] = useState<TabId>('tables');
-  const [tableViewMode, setTableViewMode] = useState<'diffs' | 'no-source' | 'no-target' | 'all'>('diffs');
   const [tableFilter, setTableFilter] = useState('');
   const [expandedSchemas, setExpandedSchemas] = useState<Set<string>>(new Set(['public']));
   const [selectedTable, setSelectedTable] = useState<{ schema: string; table: string } | null>(null);
   const [tabCounts, setTabCounts] = useState<Record<string, number>>({});
+
+  // URL-driven tab and view mode
+  const tabParam = searchParams.get('tab');
+  const viewParam = searchParams.get('view');
+  const activeTab: TabId = tabParam && VALID_TABS.includes(tabParam as TabId) ? tabParam as TabId : 'tables';
+  const tableViewMode: TableViewMode = viewParam && (VALID_VIEW_MODES as readonly string[]).includes(viewParam) ? viewParam as TableViewMode : 'diffs';
+
+  const setActiveTab = useCallback((tab: TabId) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      if (tab === 'tables') next.delete('tab');
+      else next.set('tab', tab);
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
+
+  const setTableViewMode = useCallback((mode: TableViewMode) => {
+    setSearchParams(prev => {
+      const next = new URLSearchParams(prev);
+      next.set('view', mode);
+      return next;
+    }, { replace: true });
+  }, [setSearchParams]);
 
   const sourceParam = searchParams.get('source');
 
@@ -96,7 +121,10 @@ export default function Compare() {
     syncLocalEnvId(envName);
     setSelectedEnv(envName);
     localStorage.setItem(LAST_ENV_KEY, envName);
-    navigate(`/compare/${envName}`, { replace: true });
+    const params = new URLSearchParams(searchParams);
+    params.delete('view');
+    const qs = params.toString();
+    navigate(`/compare/${envName}${qs ? `?${qs}` : ''}`, { replace: true });
     setStats(null);
     setSelectedTable(null);
   }
@@ -221,6 +249,22 @@ export default function Compare() {
 
   const tableCount = allTableKeys.user;
   const systemTableCount = allTableKeys.system;
+
+  const hasDiffs = comparison
+    ? comparison.tables_missing_in_target.length > 0 || comparison.tables_missing_in_source.length > 0
+    : false;
+
+  useEffect(() => {
+    if (!comparison) return;
+    if (searchParams.has('view')) return;
+    if (!hasDiffs) {
+      setSearchParams(prev => {
+        const next = new URLSearchParams(prev);
+        next.set('view', 'all');
+        return next;
+      }, { replace: true });
+    }
+  }, [comparison]);
 
 
   if (environments.length === 0) {
@@ -424,8 +468,6 @@ function TabNav({ activeTab, onTabChange, counts }: {
     </div>
   );
 }
-
-type TableViewMode = 'diffs' | 'no-source' | 'no-target' | 'all';
 
 function TablesView({ envName, source, target, comparison, viewMode, setViewMode, systemOnly, tableFilter, setTableFilter, expandedSchemas, toggleSchema, selectedTable, onTableClick }: {
   envName: string;
