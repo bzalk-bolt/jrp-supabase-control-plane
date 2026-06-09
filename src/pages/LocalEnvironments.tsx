@@ -21,6 +21,11 @@ function isValidApex(value: string): boolean {
   return /^[a-z0-9-]+(\.[a-z0-9-]+)+$/.test(trimmed);
 }
 
+function isValidEnvironmentNamespace(value: string): boolean {
+  const trimmed = value.trim().toLowerCase();
+  return /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(trimmed);
+}
+
 export default function LocalEnvironments() {
   const { id } = useParams();
   if (id === 'new') return <CreateLocalEnvironmentWizard />;
@@ -178,6 +183,7 @@ function CreateLocalEnvironmentWizard() {
 
   const [name, setName] = useState('');
   const [apex, setApex] = useState('');
+  const [environmentNamespace, setEnvironmentNamespace] = useState('');
 
   const [verification, setVerification] = useState<DomainVerification | null>(null);
   const [checking, setChecking] = useState(false);
@@ -185,7 +191,8 @@ function CreateLocalEnvironmentWizard() {
   const [created, setCreated] = useState<LocalEnvironment | null>(null);
 
   const apexValid = isValidApex(apex);
-  const canContinueDomain = apexValid && name.trim().length > 0;
+  const namespaceValid = isValidEnvironmentNamespace(environmentNamespace);
+  const canContinueDomain = apexValid && namespaceValid && name.trim().length > 0;
 
   async function goToVerify() {
     setError('');
@@ -235,11 +242,18 @@ function CreateLocalEnvironmentWizard() {
     setError('');
     try {
       const apexClean = apex.trim().toLowerCase();
+      const namespaceClean = environmentNamespace.trim().toLowerCase();
+      const fullHostname = localEnvironmentsService.composeFullHostname(namespaceClean, apexClean);
       const env = await localEnvironmentsService.createLocalEnvironment({
         name,
         apex_domain: apexClean,
-        subdomain: '',
-        full_hostname: apexClean,
+        subdomain: namespaceClean,
+        full_hostname: fullHostname,
+        sync_api_url: localEnvironmentsService.syncApiUrlForEnvironment({
+          apex_domain: apexClean,
+          subdomain: namespaceClean,
+          full_hostname: fullHostname,
+        }),
         dns_verified_at: verification?.verified_at ?? null,
         vps_status: 'awaiting_dns',
       });
@@ -278,7 +292,10 @@ function CreateLocalEnvironmentWizard() {
           setName={setName}
           apex={apex}
           setApex={setApex}
+          environmentNamespace={environmentNamespace}
+          setEnvironmentNamespace={setEnvironmentNamespace}
           apexValid={apexValid}
+          namespaceValid={namespaceValid}
           onContinue={goToVerify}
           canContinue={canContinueDomain}
         />
@@ -354,11 +371,16 @@ function Stepper({ step }: { step: WizardStep }) {
 function DomainStep(props: {
   name: string; setName: (v: string) => void;
   apex: string; setApex: (v: string) => void;
+  environmentNamespace: string; setEnvironmentNamespace: (v: string) => void;
   apexValid: boolean;
+  namespaceValid: boolean;
   onContinue: () => void; canContinue: boolean;
 }) {
-  const generatedSubdomains = props.apexValid && props.apex
-    ? ['supabase', 'studio', 'auth', 'sync-api'].map(sub => `${sub}.${props.apex}`)
+  const baseHostname = props.apexValid && props.namespaceValid
+    ? localEnvironmentsService.composeFullHostname(props.environmentNamespace, props.apex)
+    : '';
+  const generatedSubdomains = baseHostname
+    ? ['supabase', 'studio', 'auth', 'sync-api'].map(sub => `${sub}.${baseHostname}`)
     : [];
 
   return (
@@ -388,6 +410,28 @@ function DomainStep(props: {
         />
         {props.apex && !props.apexValid && (
           <p className="mt-1 text-xs text-red-400">Enter a valid domain like example.com</p>
+        )}
+      </div>
+
+      <div>
+        <label className="block text-xs font-medium text-gray-400 mb-2 uppercase tracking-wider">Environment namespace</label>
+        <input
+          type="text"
+          value={props.environmentNamespace}
+          onChange={e => props.setEnvironmentNamespace(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
+          placeholder="demo"
+          className={classNames(
+            'w-full px-3 py-2.5 bg-gray-950 border rounded-lg text-sm text-gray-200 placeholder-gray-600 focus:outline-none font-mono',
+            !props.environmentNamespace || props.namespaceValid ? 'border-gray-800 focus:border-emerald-600/50' : 'border-red-500/50',
+          )}
+        />
+        {props.environmentNamespace && !props.namespaceValid && (
+          <p className="mt-1 text-xs text-red-400">Use one DNS label: letters, numbers, and hyphens only.</p>
+        )}
+        {baseHostname && (
+          <p className="mt-1 text-xs text-gray-500">
+            This stack will use <span className="font-mono text-gray-300">{baseHostname}</span> as its environment base.
+          </p>
         )}
       </div>
 
@@ -832,4 +876,3 @@ function ProvisionProgress({ envId, onDone }: { envId: string; onDone: () => voi
 function LocalEnvironmentDetail({ id }: { id: string }) {
   return <EnvironmentDetailPanel id={id} />;
 }
-
