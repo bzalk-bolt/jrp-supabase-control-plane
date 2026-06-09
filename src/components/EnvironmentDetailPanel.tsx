@@ -43,6 +43,10 @@ function isTrustedCertificatePending(results?: Record<string, unknown> | null): 
   );
 }
 
+function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 export default function EnvironmentDetailPanel({ id }: { id: string }) {
   const navigate = useNavigate();
   const [env, setEnv] = useState<LocalEnvironment | null | undefined>(undefined);
@@ -579,6 +583,12 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
     try {
       const res = await vpsProvisionService.repairSsl(env.id, { letsencrypt_production: useProductionCerts });
       setSslRepairResult({ status: res.status, message: res.message, ssh_command: res.ssh_command, output: res.output });
+      if (useProductionCerts && res.status === 'completed') {
+        setRepairProgressMsg('Waiting for Traefik to reload certificates...');
+        await sleep(8000);
+        setRepairProgressMsg('Rechecking service health...');
+        await runCheck();
+      }
     } catch (e: unknown) {
       const err = e as Error & { ssh_command?: string; output?: string };
       setSslRepairResult({

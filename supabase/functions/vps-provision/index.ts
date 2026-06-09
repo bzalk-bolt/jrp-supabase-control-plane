@@ -1398,7 +1398,7 @@ async function handleRepairSsl(req: Request, user: AuthedUser): Promise<Response
       return jsonResponse({
         status: "completed",
         message: useProductionCerts
-          ? "Production certificate request completed. Run health checks again after Traefik reloads."
+          ? "Production certificate request completed. Waiting for Traefik reload, then health checks will refresh."
           : "SSL repair script ran successfully. Certificates should now be active.",
         output: result.stdout.slice(-2000),
         ssh_command: sshCommand,
