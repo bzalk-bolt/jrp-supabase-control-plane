@@ -396,6 +396,8 @@ export default function Compare() {
               onSourceChange={(slug) => setSourceParam(slug ? `edge:${slug}` : null)}
               sourceLabel={sourceProject?.name}
               targetLabel={targetProject?.name}
+              viewMode={tableViewMode}
+              onViewModeChange={setTableViewMode}
             />
           )}
 
@@ -406,15 +408,25 @@ export default function Compare() {
               onSourceChange={(key) => setSourceParam(key ? `fn:${key}` : null)}
               sourceLabel={sourceProject?.name}
               targetLabel={targetProject?.name}
+              viewMode={tableViewMode}
+              onViewModeChange={setTableViewMode}
             />
           )}
 
           {activeTab === 'table-triggers' && (
-            <TableTriggersView envName={selectedEnv!} />
+            <TableTriggersView
+              envName={selectedEnv!}
+              viewMode={tableViewMode}
+              onViewModeChange={setTableViewMode}
+            />
           )}
 
           {activeTab === 'event-triggers' && (
-            <EventTriggersView envName={selectedEnv!} />
+            <EventTriggersView
+              envName={selectedEnv!}
+              viewMode={tableViewMode}
+              onViewModeChange={setTableViewMode}
+            />
           )}
 
           {activeTab === 'migrations' && (

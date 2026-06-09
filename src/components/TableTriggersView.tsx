@@ -13,15 +13,22 @@ function triggerKey(t: TableTriggerIdentity): string {
 
 type ViewMode = 'diffs' | 'no-source' | 'no-target' | 'all';
 
-export default function TableTriggersView({ envName, onCountLoaded }: { envName: string; onCountLoaded?: (count: number) => void }) {
+export default function TableTriggersView({ envName, onCountLoaded, viewMode: externalViewMode, onViewModeChange }: {
+  envName: string;
+  onCountLoaded?: (count: number) => void;
+  viewMode?: ViewMode;
+  onViewModeChange?: (mode: ViewMode) => void;
+}) {
   const [data, setData] = useState<DatabaseTriggersResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [selectedTrigger, setSelectedTrigger] = useState<string | null>(null);
   const [includeInternal, setIncludeInternal] = useState(false);
-  const [viewMode, setViewMode] = useState<ViewMode>('diffs');
+  const [internalViewMode, setInternalViewMode] = useState<ViewMode>('diffs');
   const [trigFilter, setTrigFilter] = useState('');
 
+  const viewMode = externalViewMode ?? internalViewMode;
+  const setViewMode = onViewModeChange ?? setInternalViewMode;
   useEffect(() => {
     setLoading(true);
     syncApi.getDatabaseTriggers(envName, includeInternal)

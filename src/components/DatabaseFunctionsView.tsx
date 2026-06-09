@@ -14,19 +14,23 @@ function fnKey(f: DatabaseFunctionIdentity): string {
 
 type ViewMode = 'diffs' | 'no-source' | 'no-target' | 'all';
 
-export default function DatabaseFunctionsView({ envName, openFnKey, onSourceChange, sourceLabel, targetLabel }: {
+export default function DatabaseFunctionsView({ envName, openFnKey, onSourceChange, sourceLabel, targetLabel, viewMode: externalViewMode, onViewModeChange }: {
   envName: string;
   openFnKey?: string;
   onSourceChange?: (key: string | null) => void;
   sourceLabel?: string;
   targetLabel?: string;
+  viewMode?: ViewMode;
+  onViewModeChange?: (mode: ViewMode) => void;
 }) {
   const [data, setData] = useState<DatabaseFunctionsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [viewMode, setViewMode] = useState<ViewMode>('diffs');
+  const [internalViewMode, setInternalViewMode] = useState<ViewMode>('diffs');
   const [fnFilter, setFnFilter] = useState('');
 
+  const viewMode = externalViewMode ?? internalViewMode;
+  const setViewMode = onViewModeChange ?? setInternalViewMode;
   useEffect(() => {
     setLoading(true);
     syncApi.getDatabaseFunctions(envName)

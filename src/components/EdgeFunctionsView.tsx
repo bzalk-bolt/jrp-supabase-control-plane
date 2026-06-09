@@ -8,19 +8,24 @@ import type {
 } from '../types/api';
 import SourceComparisonModal from './SourceComparisonModal';
 
-export default function EdgeFunctionsView({ envName, openSlug, onSourceChange, sourceLabel, targetLabel }: {
+export default function EdgeFunctionsView({ envName, openSlug, onSourceChange, sourceLabel, targetLabel, viewMode: externalViewMode, onViewModeChange }: {
   envName: string;
   openSlug?: string;
   onSourceChange?: (slug: string | null) => void;
   sourceLabel?: string;
   targetLabel?: string;
+  viewMode?: 'diffs' | 'no-source' | 'no-target' | 'all';
+  onViewModeChange?: (mode: 'diffs' | 'no-source' | 'no-target' | 'all') => void;
 }) {
   const [data, setData] = useState<EdgeFunctionsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [viewMode, setViewMode] = useState<'diffs' | 'no-source' | 'no-target' | 'all'>('diffs');
+  const [internalViewMode, setInternalViewMode] = useState<'diffs' | 'no-source' | 'no-target' | 'all'>('diffs');
   const [fnFilter, setFnFilter] = useState('');
   const viewingSlug = openSlug ?? null;
+
+  const viewMode = externalViewMode ?? internalViewMode;
+  const setViewMode = onViewModeChange ?? setInternalViewMode;
 
   function setViewingSlug(slug: string | null) {
     onSourceChange?.(slug);
