@@ -290,16 +290,10 @@ export interface RepairSslResponse {
   error?: string;
 }
 
-export async function repairSsl(
-  localEnvId: string,
-  options: { letsencrypt_production?: boolean } = {},
-): Promise<RepairSslResponse> {
+export async function repairSsl(localEnvId: string): Promise<RepairSslResponse> {
   const res = await authedFetch('repair-ssl', {
     method: 'POST',
-    body: JSON.stringify({
-      local_environment_id: localEnvId,
-      letsencrypt_production: options.letsencrypt_production === true,
-    }),
+    body: JSON.stringify({ local_environment_id: localEnvId }),
   });
   const body = await res.json().catch(() => ({}));
   if (!res.ok) {
