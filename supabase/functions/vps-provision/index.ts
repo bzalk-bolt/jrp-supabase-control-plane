@@ -735,7 +735,7 @@ async function handleResumeSetup(req: Request, user: AuthedUser): Promise<Respon
       }
       // state is "initial" or "installing" -- proceed with setup below
     }
-  } catch (_) {
+  } catch {
     // Non-fatal: if state check fails, we still attempt setup
   }
 
@@ -1416,8 +1416,8 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
     const ip = envRow.vps_ip as string;
     const password = envRow.vps_root_password as string;
     const baseDomain = envRow.apex_domain as string;
-    const syncApiToken = String(envRow.sync_api_token || "") || generateSyncApiToken();
-    const sshCommand = `ssh root@${ip} 'CONFIRM_RESET=CONFIRM BASE_DOMAIN=${baseDomain} SYNC_API_TOKEN=<token> curl -fsSL ${RESET_VPS_SCRIPT_URL} | bash'`;
+    const syncApiToken = generateSyncApiToken();
+    const sshCommand = `ssh root@${ip} 'curl -fsSL ${RESET_VPS_SCRIPT_URL} | SYNC_API_TOKEN=<fresh-token> LETSENCRYPT_PRODUCTION=false bash -s -- ${baseDomain} --confirm CONFIRM'`;
 
     if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
     if (!password) {
@@ -1428,66 +1428,141 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
     }
     if (!baseDomain) return jsonResponse({ error: "No apex_domain configured for this environment" }, 400);
 
-    // Persist token if freshly generated
-    if (!envRow.sync_api_token) {
-      await user.client.from("local_environments").update({
-        sync_api_token: syncApiToken,
-        updated_at: new Date().toISOString(),
-      }).eq("id", localEnvId);
-    }
+    await user.client.from("local_environments").update({
+      vps_status: "provisioning",
+      post_install_status: "running",
+      sync_api_token: syncApiToken,
+      updated_at: new Date().toISOString(),
+    }).eq("id", localEnvId);
 
     await recordEvent(user.client, user.id, localEnvId, "reset-vps", 5,
       "Connecting to server via SSH to run full VPS reset", "running");
 
-    const command = `CONFIRM_RESET=CONFIRM BASE_DOMAIN=${shellQuote(baseDomain)} SYNC_API_TOKEN=${shellQuote(syncApiToken)} curl -fsSL ${RESET_VPS_SCRIPT_URL} | bash`;
-    let lastProgressUpdate = 0;
-    const result = await execSshCommand(ip, password, command, (stdout) => {
-      const now = Date.now();
-      if (now - lastProgressUpdate > 5000) {
-        lastProgressUpdate = now;
-        const lastLine = stdout.trim().split("\n").pop() || "";
-        EdgeRuntime.waitUntil(
-          recordEvent(user.client, user.id, localEnvId, "reset-vps", 50,
-            lastLine.slice(0, 150) || "Running reset script...", "running", { stdout_tail: stdout.slice(-400) })
-        );
-      }
-    }, 15 * 60 * 1000);
+    const resetCommand = [
+      "set -o pipefail",
+      "rm -f /root/jrp-reset-vps-latest.pid /root/jrp-reset-vps-latest.exit /root/jrp-reset-vps-ssh.log",
+      `curl -fsSL ${shellQuote(RESET_VPS_SCRIPT_URL)} | SYNC_API_TOKEN=${shellQuote(syncApiToken)} LETSENCRYPT_PRODUCTION=false bash -s -- ${shellQuote(baseDomain)} --confirm CONFIRM`,
+      "code=$?",
+      "echo \"$code\" > /root/jrp-reset-vps-latest.exit",
+      "exit \"$code\"",
+    ].join("; ");
+    const command = [
+      "cd /",
+      `nohup bash -lc ${shellQuote(resetCommand)} >/root/jrp-reset-vps-ssh.log 2>&1 < /dev/null &`,
+      "pid=$!",
+      "echo \"$pid\" > /root/jrp-reset-vps-latest.pid",
+      "echo \"started pid=$pid log=/root/jrp-reset-vps-ssh.log latest=/root/jrp-reset-vps-latest.log\"",
+    ].join("; ");
+    const result = await execSshCommand(ip, password, command, undefined, 30_000);
 
-    if (result.code === 0) {
-      // Reset local environment state back to post-install step
+    if (result.code !== 0) {
+      await recordEvent(user.client, user.id, localEnvId, "reset-vps", 10,
+        `Failed to start reset script: exit ${result.code}`, "failed", { stdout_tail: result.stdout.slice(-500), stderr_tail: result.stderr.slice(-500) });
+      return jsonResponse({
+        status: "failed",
+        message: `Failed to start reset script: exit ${result.code}`,
+        output: (result.stdout + "\n" + result.stderr).slice(-4000),
+        ssh_command: sshCommand,
+      }, 200);
+    }
+
+    await recordEvent(user.client, user.id, localEnvId, "reset-vps", 10,
+      "VPS reset started in the background", "running", { stdout_tail: result.stdout.slice(-500) });
+
+    return jsonResponse({
+      status: "running",
+      message: "VPS reset started. Progress will update from the server log.",
+      output: result.stdout.slice(-4000),
+      ssh_command: sshCommand,
+    }, 200);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return jsonResponse({ error: message, ssh_command: "" }, 500);
+  }
+}
+
+async function handlePollResetVps(req: Request, user: AuthedUser): Promise<Response> {
+  try {
+    const body = (await req.json().catch(() => ({}))) as { local_environment_id?: string };
+    const localEnvId = body.local_environment_id;
+    if (!localEnvId) return jsonResponse({ error: "local_environment_id required" }, 400);
+
+    const { data: envRow } = await user.client
+      .from("local_environments")
+      .select("*")
+      .eq("id", localEnvId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!envRow) return jsonResponse({ error: "Environment not found" }, 404);
+
+    const ip = envRow.vps_ip as string;
+    const password = envRow.vps_root_password as string;
+    const sshCommand = `ssh root@${ip} 'tail -f /root/jrp-reset-vps-latest.log'`;
+
+    if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
+    if (!password) return jsonResponse({ error: "No root password stored for this environment.", ssh_command: sshCommand }, 400);
+
+    const command = [
+      "code=\"\"",
+      "[ -f /root/jrp-reset-vps-latest.exit ] && code=$(cat /root/jrp-reset-vps-latest.exit 2>/dev/null || true)",
+      "if [ -n \"$code\" ]; then echo \"__JRP_EXIT_CODE=$code\"; fi",
+      "tail -c 4000 /root/jrp-reset-vps-latest.log 2>/dev/null || tail -c 4000 /root/jrp-reset-vps-ssh.log 2>/dev/null || echo '[no reset log found yet]'",
+    ].join("; ");
+    const result = await execSshCommand(ip, password, command, undefined, 30_000);
+    const combined = (result.stdout + "\n" + result.stderr).trim();
+    const marker = combined.match(/__JRP_EXIT_CODE=(\d+)/);
+    const output = combined.replace(/__JRP_EXIT_CODE=\d+\s*/, "").trim();
+    const lastLine = output.split("\n").filter(Boolean).slice(-1)[0] || "Reset is running";
+
+    if (!marker) {
+      return jsonResponse({
+        status: "running",
+        message: lastLine,
+        output,
+        ssh_command: sshCommand,
+      }, 200);
+    }
+
+    const exitCode = Number(marker[1]);
+    if (exitCode === 0) {
       await user.client.from("local_environments").update({
-        post_install_status: "pending",
+        vps_status: "ready",
+        post_install_status: "completed",
         dns_a_record_verified_at: null,
         health_check_results: null,
         last_health_check_at: null,
-        sync_api_token: syncApiToken,
         connection_mode: null,
         updated_at: new Date().toISOString(),
       }).eq("id", localEnvId);
 
-      // Remove any existing project binding since the environment is wiped
       await user.client.from("local_environment_bindings")
         .delete()
         .eq("local_environment_id", localEnvId);
 
       await recordEvent(user.client, user.id, localEnvId, "reset-vps", 100,
-        "VPS reset completed successfully", "succeeded", { stdout_tail: result.stdout.slice(-500) });
+        "VPS reset completed successfully", "succeeded", { stdout_tail: output.slice(-500) });
       return jsonResponse({
         status: "completed",
         message: "VPS reset and reinstall completed successfully.",
-        output: result.stdout.slice(-4000),
-        ssh_command: sshCommand,
-      }, 200);
-    } else {
-      await recordEvent(user.client, user.id, localEnvId, "reset-vps", 80,
-        `VPS reset script exited with code ${result.code}`, "failed", { stdout_tail: result.stdout.slice(-500), stderr_tail: result.stderr.slice(-500) });
-      return jsonResponse({
-        status: "failed",
-        message: `Reset script exited with code ${result.code}. Check the output below or run manually via SSH.`,
-        output: (result.stdout + "\n" + result.stderr).slice(-4000),
+        output,
         ssh_command: sshCommand,
       }, 200);
     }
+
+    await user.client.from("local_environments").update({
+      vps_status: "failed",
+      post_install_status: "failed",
+      updated_at: new Date().toISOString(),
+    }).eq("id", localEnvId);
+
+    await recordEvent(user.client, user.id, localEnvId, "reset-vps", 80,
+      `Reset script exited with code ${exitCode}`, "failed", { stdout_tail: output.slice(-500) });
+    return jsonResponse({
+      status: "failed",
+      message: `Reset script exited with code ${exitCode}. Check the output below or run manually via SSH.`,
+      output,
+      ssh_command: sshCommand,
+    }, 200);
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return jsonResponse({ error: message, ssh_command: "" }, 500);
@@ -1660,6 +1735,11 @@ Deno.serve(async (req: Request) => {
       const auth = await authenticate(req);
       if (auth instanceof Response) return auth;
       return await handleResetVps(req, auth);
+    }
+    if (op === "poll-reset-vps" && req.method === "POST") {
+      const auth = await authenticate(req);
+      if (auth instanceof Response) return auth;
+      return await handlePollResetVps(req, auth);
     }
     if (op === "repair-sync-token" && req.method === "POST") {
       const auth = await authenticate(req);

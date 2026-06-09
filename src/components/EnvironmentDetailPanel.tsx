@@ -241,7 +241,9 @@ function SetupProgressSection({ env, onChange }: { env: LocalEnvironment; onChan
       try {
         await vpsProvisionService.pollProvision(env.id);
         await onChange();
-      } catch {}
+      } catch {
+        // Polling is best-effort; the next interval will try again.
+      }
       if (!stoppedRef.current) {
         timer = setTimeout(tick, 6000);
       }
@@ -1388,7 +1390,7 @@ function ResetServerModal({ env, onCancel, onConfirm }: { env: LocalEnvironment;
       setToken(fresh);
       localEnvironmentsService.updateLocalEnvironment(env.id, { sync_api_token: fresh } as Record<string, unknown>).catch(() => {});
     }
-  }, []);
+  }, [env.id, token]);
 
   async function handleRegenerate() {
     setRegenerating(true);

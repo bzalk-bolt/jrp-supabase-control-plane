@@ -334,6 +334,24 @@ export async function resetVps(localEnvId: string): Promise<ResetVpsResponse> {
   return body as ResetVpsResponse;
 }
 
+export async function pollResetVps(localEnvId: string): Promise<ResetVpsResponse> {
+  const res = await authedFetch('poll-reset-vps', {
+    method: 'POST',
+    body: JSON.stringify({ local_environment_id: localEnvId }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    const resp: ResetVpsResponse = {
+      status: 'failed',
+      message: body?.error || `VPS reset poll failed (${res.status})`,
+      ssh_command: body?.ssh_command || '',
+      output: body?.output,
+    };
+    throw Object.assign(new Error(resp.message), { ssh_command: resp.ssh_command, output: resp.output });
+  }
+  return body as ResetVpsResponse;
+}
+
 export interface RepairSyncTokenResponse {
   status: string;
   message: string;
