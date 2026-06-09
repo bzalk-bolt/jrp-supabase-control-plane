@@ -1605,7 +1605,7 @@ async function handleServerDiagnostics(req: Request, user: AuthedUser): Promise<
     if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
     if (!password) return jsonResponse({ error: "No root password stored for this environment.", ssh_command: sshCommand }, 400);
 
-    const script = String.raw`
+    const script = `
 set +e
 TAIL_BYTES="\${TAIL_BYTES:-12000}"
 BASE_DOMAIN="\${BASE_DOMAIN:-}"
