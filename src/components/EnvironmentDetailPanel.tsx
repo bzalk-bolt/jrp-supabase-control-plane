@@ -588,6 +588,7 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
         await sleep(8000);
         setRepairProgressMsg('Rechecking service health...');
         await runCheck();
+        setSslRepairResult(null);
       }
     } catch (e: unknown) {
       const err = e as Error & { ssh_command?: string; output?: string };
