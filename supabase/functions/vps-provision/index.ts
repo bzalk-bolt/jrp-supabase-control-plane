@@ -929,6 +929,7 @@ async function handleRecreate(req: Request, user: AuthedUser): Promise<Response>
       `export BASE_DOMAIN=${shellQuote(apexDomain)}`,
       `export LETSENCRYPT_EMAIL=${shellQuote(`admin@${apexDomain}`)}`,
       `export SYNC_API_DOMAIN=${shellQuote(hostname)}`,
+      `export SYNC_API_TOKEN=${shellQuote(syncApiToken)}`,
       `export JRP_REPO_URL="https://github.com/bzalk/jrp-supabase.git"`,
       `export JRP_REPO_BRANCH="main"`,
       `export JRP_INSTALL_DIR="/opt/jrp-supabase"`,
@@ -1415,7 +1416,8 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
     const ip = envRow.vps_ip as string;
     const password = envRow.vps_root_password as string;
     const baseDomain = envRow.apex_domain as string;
-    const sshCommand = `ssh root@${ip} 'CONFIRM_RESET=RESET BASE_DOMAIN=${baseDomain} curl -fsSL ${RESET_VPS_SCRIPT_URL} | bash'`;
+    const syncApiToken = String(envRow.sync_api_token || "") || generateSyncApiToken();
+    const sshCommand = `ssh root@${ip} 'CONFIRM_RESET=CONFIRM BASE_DOMAIN=${baseDomain} SYNC_API_TOKEN=<token> curl -fsSL ${RESET_VPS_SCRIPT_URL} | bash'`;
 
     if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
     if (!password) {
@@ -1426,10 +1428,18 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
     }
     if (!baseDomain) return jsonResponse({ error: "No apex_domain configured for this environment" }, 400);
 
+    // Persist token if freshly generated
+    if (!envRow.sync_api_token) {
+      await user.client.from("local_environments").update({
+        sync_api_token: syncApiToken,
+        updated_at: new Date().toISOString(),
+      }).eq("id", localEnvId);
+    }
+
     await recordEvent(user.client, user.id, localEnvId, "reset-vps", 5,
       "Connecting to server via SSH to run full VPS reset", "running");
 
-    const command = `CONFIRM_RESET=RESET BASE_DOMAIN=${shellQuote(baseDomain)} curl -fsSL ${RESET_VPS_SCRIPT_URL} | bash`;
+    const command = `CONFIRM_RESET=CONFIRM BASE_DOMAIN=${shellQuote(baseDomain)} SYNC_API_TOKEN=${shellQuote(syncApiToken)} curl -fsSL ${RESET_VPS_SCRIPT_URL} | bash`;
     let lastProgressUpdate = 0;
     const result = await execSshCommand(ip, password, command, (stdout) => {
       const now = Date.now();
@@ -1444,6 +1454,22 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
     }, 15 * 60 * 1000);
 
     if (result.code === 0) {
+      // Reset local environment state back to post-install step
+      await user.client.from("local_environments").update({
+        post_install_status: "pending",
+        dns_a_record_verified_at: null,
+        health_check_results: null,
+        last_health_check_at: null,
+        sync_api_token: syncApiToken,
+        connection_mode: null,
+        updated_at: new Date().toISOString(),
+      }).eq("id", localEnvId);
+
+      // Remove any existing project binding since the environment is wiped
+      await user.client.from("local_environment_bindings")
+        .delete()
+        .eq("local_environment_id", localEnvId);
+
       await recordEvent(user.client, user.id, localEnvId, "reset-vps", 100,
         "VPS reset completed successfully", "succeeded", { stdout_tail: result.stdout.slice(-500) });
       return jsonResponse({
@@ -1465,6 +1491,95 @@ async function handleResetVps(req: Request, user: AuthedUser): Promise<Response>
   } catch (err) {
     const message = err instanceof Error ? err.message : "Unknown error";
     return jsonResponse({ error: message, ssh_command: "" }, 500);
+  }
+}
+
+// --- Repair Sync Token: SSH into server and update the sync-api bearer token ---
+
+async function handleRepairSyncToken(req: Request, user: AuthedUser): Promise<Response> {
+  try {
+    const body = (await req.json().catch(() => ({}))) as { local_environment_id?: string };
+    const localEnvId = body.local_environment_id;
+    if (!localEnvId) return jsonResponse({ error: "local_environment_id required" }, 400);
+
+    const { data: envRow } = await user.client
+      .from("local_environments")
+      .select("*")
+      .eq("id", localEnvId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!envRow) return jsonResponse({ error: "Environment not found" }, 404);
+
+    const ip = envRow.vps_ip as string;
+    const password = envRow.vps_root_password as string;
+    if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
+    if (!password) return jsonResponse({ error: "No root password stored for this environment." }, 400);
+
+    // Use existing token or generate a new one
+    let syncApiToken = String(envRow.sync_api_token || "");
+    if (!syncApiToken) {
+      syncApiToken = generateSyncApiToken();
+      await user.client.from("local_environments").update({
+        sync_api_token: syncApiToken,
+        updated_at: new Date().toISOString(),
+      }).eq("id", localEnvId);
+    }
+
+    await recordEvent(user.client, user.id, localEnvId, "repair-sync-token", 10,
+      "Connecting to server via SSH to update sync-api token", "running");
+
+    // Update the token in the sync-api .env file and restart the service
+    const script = [
+      `TOKEN=${shellQuote(syncApiToken)}`,
+      // Try common locations for the sync-api env/config
+      `for ENV_FILE in /opt/jrp-supabase/.env /opt/sync-api/.env /etc/sync-api/.env; do`,
+      `  if [ -f "$ENV_FILE" ]; then`,
+      `    if grep -q "^SYNC_API_TOKEN=" "$ENV_FILE" 2>/dev/null; then`,
+      `      sed -i "s|^SYNC_API_TOKEN=.*|SYNC_API_TOKEN=$TOKEN|" "$ENV_FILE"`,
+      `    else`,
+      `      echo "SYNC_API_TOKEN=$TOKEN" >> "$ENV_FILE"`,
+      `    fi`,
+      `    echo "Updated $ENV_FILE"`,
+      `  fi`,
+      `done`,
+      // Also update docker-compose env if present
+      `if [ -f /opt/jrp-supabase/docker-compose.yml ]; then`,
+      `  cd /opt/jrp-supabase`,
+      `  if docker compose ps sync-api --format json 2>/dev/null | grep -q running; then`,
+      `    docker compose restart sync-api && echo "Restarted sync-api container"`,
+      `  elif systemctl is-active sync-api >/dev/null 2>&1; then`,
+      `    systemctl restart sync-api && echo "Restarted sync-api service"`,
+      `  else`,
+      `    echo "Could not find running sync-api to restart"`,
+      `  fi`,
+      `elif systemctl is-active sync-api >/dev/null 2>&1; then`,
+      `  systemctl restart sync-api && echo "Restarted sync-api service"`,
+      `fi`,
+      `echo "DONE"`,
+    ].join("\n");
+
+    const result = await execSshCommand(ip, password, script, undefined, 60_000);
+
+    if (result.code === 0 && result.stdout.includes("DONE")) {
+      await recordEvent(user.client, user.id, localEnvId, "repair-sync-token", 100,
+        "Sync API token updated successfully", "succeeded", { stdout_tail: result.stdout.slice(-300) });
+      return jsonResponse({
+        status: "completed",
+        message: "Sync API token has been updated on the server.",
+        output: result.stdout.slice(-2000),
+      }, 200);
+    } else {
+      await recordEvent(user.client, user.id, localEnvId, "repair-sync-token", 80,
+        `Token update exited with code ${result.code}`, "failed", { stdout_tail: result.stdout.slice(-300), stderr_tail: result.stderr.slice(-300) });
+      return jsonResponse({
+        status: "failed",
+        message: `Token repair exited with code ${result.code}.`,
+        output: (result.stdout + "\n" + result.stderr).slice(-2000),
+      }, 200);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return jsonResponse({ error: message }, 500);
   }
 }
 
@@ -1545,6 +1660,11 @@ Deno.serve(async (req: Request) => {
       const auth = await authenticate(req);
       if (auth instanceof Response) return auth;
       return await handleResetVps(req, auth);
+    }
+    if (op === "repair-sync-token" && req.method === "POST") {
+      const auth = await authenticate(req);
+      if (auth instanceof Response) return auth;
+      return await handleRepairSyncToken(req, auth);
     }
     return jsonResponse({ error: "Unknown operation" }, 404);
   } catch (err) {

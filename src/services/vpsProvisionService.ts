@@ -333,3 +333,21 @@ export async function resetVps(localEnvId: string): Promise<ResetVpsResponse> {
   }
   return body as ResetVpsResponse;
 }
+
+export interface RepairSyncTokenResponse {
+  status: string;
+  message: string;
+  output?: string;
+}
+
+export async function repairSyncToken(localEnvId: string): Promise<RepairSyncTokenResponse> {
+  const res = await authedFetch('repair-sync-token', {
+    method: 'POST',
+    body: JSON.stringify({ local_environment_id: localEnvId }),
+  });
+  const body = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new Error(body?.error || `Sync token repair failed (${res.status})`);
+  }
+  return body as RepairSyncTokenResponse;
+}

@@ -3,13 +3,14 @@ import { Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, CheckCircle2, Circle, Loader2, RefreshCw, Server,
   ShieldCheck, AlertTriangle, Trash2, X, Activity, Globe, Copy,
-  RotateCcw, ExternalLink, Terminal, Wrench, Download, Rocket, ChevronDown,
+  RotateCcw, ExternalLink, Terminal, Wrench, Download, Rocket, ChevronDown, KeyRound,
 } from 'lucide-react';
 import { localEnvironmentsService, vpsProvisionService, settingsService } from '../services';
 import type { LocalEnvironment, LocalEnvironmentBinding, ProvisioningJob } from '../types/api';
 import type { HealthCheckResponse, VmDetailsResponse } from '../services/vpsProvisionService';
 import ConnectProjectWizard from './ConnectProjectWizard';
 import ConnectedProjectCard from './ConnectedProjectCard';
+import SyncOperationsPanel from './SyncOperationsPanel';
 
 function cn(...parts: Array<string | false | null | undefined>): string {
   return parts.filter(Boolean).join(' ');
@@ -85,7 +86,7 @@ export default function EnvironmentDetailPanel({ id }: { id: string }) {
         </Link>
         <div className="flex-1 min-w-0">
           <h1 className="text-2xl font-bold text-white tracking-tight truncate">{env.name || env.full_hostname}</h1>
-          <p className="text-sm text-gray-400 mt-1 font-mono truncate">{env.full_hostname}</p>
+          <p className="text-sm text-gray-400 mt-1 font-mono truncate">{env.apex_domain}</p>
         </div>
         <span className={cn('inline-flex items-center gap-1 px-2.5 py-1 rounded-full border text-xs font-medium', s.cls)}>
           <Icon className={cn('w-3.5 h-3.5', /provisioning|installing|configuring/.test(env.vps_status) && 'animate-spin')} />
@@ -110,18 +111,7 @@ export default function EnvironmentDetailPanel({ id }: { id: string }) {
       <ProvisioningLogSection envId={env.id} />
 
       {/* Danger Zone */}
-      <div className="border-t border-gray-800 pt-5">
-        <button
-          onClick={() => setConfirmDelete(true)}
-          className="inline-flex items-center gap-2 px-4 py-2.5 bg-red-600/10 hover:bg-red-600/20 border border-red-600/30 text-red-400 text-sm font-medium rounded-lg transition-colors"
-        >
-          <Trash2 className="w-4 h-4" />
-          Delete environment
-        </button>
-        <p className="text-xs text-gray-500 mt-2">
-          Removes this environment record. The provisioned server (if any) is not destroyed automatically.
-        </p>
-      </div>
+      <DangerZoneSection env={env} onDelete={() => setConfirmDelete(true)} onChange={reload} />
 
       {confirmDelete && (
         <ConfirmDeleteModal
@@ -1239,6 +1229,254 @@ function ProvisioningLogSection({ envId }: { envId: string }) {
   );
 }
 
+// --- Danger Zone Section ---
+
+function DangerZoneSection({ env, onDelete, onChange }: { env: LocalEnvironment; onDelete: () => void; onChange: () => void | Promise<void> }) {
+  const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [resetting, setResetting] = useState(false);
+  const [resetResult, setResetResult] = useState<{ status?: string; message?: string; output?: string } | null>(null);
+  const [progressMsg, setProgressMsg] = useState<string | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  const canReset = env.vps_status === 'ready' && !!env.vps_ip;
+
+  function startPolling() {
+    stopPolling();
+    pollRef.current = setInterval(async () => {
+      try {
+        const ev = await localEnvironmentsService.getLatestResetVpsEvent(env.id);
+        if (ev) {
+          setProgressMsg(ev.message);
+          if (ev.status === 'succeeded' || ev.status === 'failed') stopPolling();
+        }
+      } catch { /* ignore */ }
+    }, 4000);
+  }
+
+  function stopPolling() {
+    if (pollRef.current) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+  }
+
+  useEffect(() => { return () => stopPolling(); }, []);
+
+  async function handleReset() {
+    setShowResetConfirm(false);
+    setResetting(true);
+    setResetResult(null);
+    setProgressMsg('Connecting to server via SSH...');
+    startPolling();
+    try {
+      const res = await vpsProvisionService.resetVps(env.id);
+      setResetResult({ status: res.status, message: res.message, output: res.output });
+      await onChange();
+    } catch (e: unknown) {
+      const err = e as Error & { output?: string };
+      setResetResult({ status: 'failed', message: err.message || 'Reset failed', output: err.output });
+    } finally {
+      setResetting(false);
+      setProgressMsg(null);
+      stopPolling();
+    }
+  }
+
+  return (
+    <div className="space-y-4">
+      <h3 className="text-sm font-semibold text-red-400 uppercase tracking-wider flex items-center gap-2">
+        <AlertTriangle className="w-4 h-4" />
+        Danger Zone
+      </h3>
+
+      <div className="border border-red-500/20 rounded-xl overflow-hidden divide-y divide-red-500/10">
+        {/* Reset Server row */}
+        {canReset && (
+          <div className="flex items-center gap-4 px-5 py-4">
+            <div className="flex-1 min-w-0">
+              <h4 className="text-sm font-medium text-gray-200">Reset Server</h4>
+              <p className="text-xs text-gray-500 mt-0.5">
+                Completely tears down all containers, volumes, and data on the server, then runs a fresh install from scratch. This process takes 5-15 minutes and cannot be undone.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowResetConfirm(true)}
+              disabled={resetting}
+              className="inline-flex items-center gap-2 px-4 py-2 border border-red-500/30 hover:bg-red-600/10 text-red-400 text-sm font-medium rounded-lg transition-colors flex-shrink-0 disabled:opacity-50"
+            >
+              {resetting ? <Loader2 className="w-4 h-4 animate-spin" /> : <RotateCcw className="w-4 h-4" />}
+              Reset Server
+            </button>
+          </div>
+        )}
+
+        {/* Delete environment row */}
+        <div className="flex items-center gap-4 px-5 py-4">
+          <div className="flex-1 min-w-0">
+            <h4 className="text-sm font-medium text-gray-200">Delete environment</h4>
+            <p className="text-xs text-gray-500 mt-0.5">
+              Removes this environment record and its provisioning history. The provisioned server (if any) is not destroyed automatically.
+            </p>
+          </div>
+          <button
+            onClick={onDelete}
+            className="inline-flex items-center gap-2 px-4 py-2 border border-red-500/30 hover:bg-red-600/10 text-red-400 text-sm font-medium rounded-lg transition-colors flex-shrink-0"
+          >
+            <Trash2 className="w-4 h-4" />
+            Delete
+          </button>
+        </div>
+      </div>
+
+      {/* Reset progress/result feedback */}
+      {(resetting || resetResult) && (
+        <div className={cn(
+          'border rounded-lg px-4 py-3 text-xs space-y-2',
+          resetResult?.status === 'completed' ? 'bg-emerald-500/5 border-emerald-500/20' :
+          resetResult?.status === 'failed' ? 'bg-red-500/5 border-red-500/20' :
+          'bg-blue-500/5 border-blue-500/20',
+        )}>
+          {resetting && (
+            <div className="space-y-1">
+              <p className="text-blue-300 font-medium flex items-center gap-2">
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                {progressMsg || 'Running full VPS reset...'}
+              </p>
+              <p className="text-gray-500 text-[11px]">This may take 5-15 minutes. Do not close this page.</p>
+            </div>
+          )}
+          {resetResult?.message && (
+            <p className={cn(
+              'font-medium',
+              resetResult.status === 'completed' && 'text-emerald-300',
+              resetResult.status === 'failed' && 'text-red-300',
+            )}>{resetResult.message}</p>
+          )}
+          {resetResult?.output && (
+            <details className="mt-2" open>
+              <summary className="text-gray-400 cursor-pointer hover:text-gray-300 transition-colors">Script output</summary>
+              <pre className="mt-1.5 text-[11px] text-gray-400 font-mono bg-gray-900 border border-gray-700 rounded p-2 max-h-64 overflow-auto whitespace-pre-wrap break-all">
+                {resetResult.output}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
+
+      {/* Reset confirmation modal */}
+      {showResetConfirm && (
+        <ResetServerModal
+          env={env}
+          onCancel={() => setShowResetConfirm(false)}
+          onConfirm={handleReset}
+        />
+      )}
+    </div>
+  );
+}
+
+// --- Reset Server Modal ---
+
+function ResetServerModal({ env, onCancel, onConfirm }: { env: LocalEnvironment; onCancel: () => void; onConfirm: () => void }) {
+  const [token, setToken] = useState(env.sync_api_token || '');
+  const [regenerating, setRegenerating] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  useEffect(() => {
+    if (!token) {
+      const fresh = localEnvironmentsService.generateSyncApiToken();
+      setToken(fresh);
+      localEnvironmentsService.updateLocalEnvironment(env.id, { sync_api_token: fresh } as Record<string, unknown>).catch(() => {});
+    }
+  }, []);
+
+  async function handleRegenerate() {
+    setRegenerating(true);
+    try {
+      const newToken = await localEnvironmentsService.regenerateSyncToken(env.id);
+      setToken(newToken);
+    } catch { /* ignore */ }
+    setRegenerating(false);
+  }
+
+  function handleCopy() {
+    navigator.clipboard.writeText(token);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <div className="bg-gray-900 border border-gray-700 rounded-xl p-6 max-w-lg w-full mx-4 shadow-2xl space-y-5">
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 rounded-full bg-red-500/10 border border-red-500/30 flex items-center justify-center">
+            <AlertTriangle className="w-5 h-5 text-red-400" />
+          </div>
+          <h3 className="text-lg font-semibold text-gray-100">Reset Server</h3>
+        </div>
+
+        <p className="text-sm text-gray-300">
+          This will completely destroy all containers, volumes, and data on the server and run a fresh install from scratch.
+          The environment will return to the post-install setup step.
+        </p>
+
+        {/* Sync API Token */}
+        <div className="bg-gray-950 border border-gray-800 rounded-lg p-4 space-y-2">
+          <div className="flex items-center gap-2">
+            <KeyRound className="w-4 h-4 text-gray-400" />
+            <span className="text-xs font-medium text-gray-300 uppercase tracking-wider">Sync API Token</span>
+          </div>
+          <p className="text-xs text-gray-500">
+            This token authenticates requests to your sync-api server. Copy it now if you need it for your records.
+          </p>
+          <div className="flex items-center gap-2">
+            <input
+              type="text"
+              readOnly
+              value={token}
+              className="flex-1 bg-gray-900 border border-gray-700 rounded-lg px-3 py-2 text-xs text-gray-200 font-mono select-all focus:outline-none focus:border-gray-600"
+            />
+            <button
+              onClick={handleCopy}
+              className="p-2 text-gray-400 hover:text-gray-200 transition-colors"
+              title="Copy token"
+            >
+              {copied ? <CheckCircle2 className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4" />}
+            </button>
+            <button
+              onClick={handleRegenerate}
+              disabled={regenerating}
+              className="p-2 text-gray-400 hover:text-gray-200 transition-colors disabled:opacity-50"
+              title="Generate new token"
+            >
+              {regenerating ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+            </button>
+          </div>
+        </div>
+
+        <p className="text-sm text-red-400 font-medium">
+          This action cannot be undone. The process may take 5-15 minutes.
+        </p>
+
+        <div className="flex items-center justify-end gap-3">
+          <button
+            onClick={onCancel}
+            className="px-4 py-2 text-sm font-medium text-gray-300 bg-gray-800 hover:bg-gray-700 border border-gray-600 rounded-lg transition-colors"
+          >
+            Cancel
+          </button>
+          <button
+            onClick={onConfirm}
+            className="px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-500 rounded-lg transition-colors"
+          >
+            Yes, Reset Server
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // --- Confirm Delete Modal ---
 
 function ConfirmDeleteModal({
@@ -1322,7 +1560,12 @@ function NextStepsSection({ env, onChange }: { env: LocalEnvironment; onChange: 
   if (binding === undefined) return null;
 
   if (binding) {
-    return <ConnectedProjectCard env={env} binding={binding} onDisconnected={handleDisconnected} />;
+    return (
+      <div className="space-y-6">
+        <ConnectedProjectCard env={env} binding={binding} onDisconnected={handleDisconnected} />
+        <SyncOperationsPanel env={env} binding={binding} />
+      </div>
+    );
   }
 
   if (showWizard) {

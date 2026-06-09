@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import {
   Building2, FolderOpen, Database, CheckCircle2, Loader2,
-  ArrowRight, ArrowLeft, X, Cloud, Download, AlertTriangle,
+  ArrowRight, ArrowLeft, X, Cloud, Download,
 } from 'lucide-react';
 import { syncApi, localEnvironmentsService } from '../services';
 import type {
@@ -11,7 +11,7 @@ import type {
   LocalEnvironmentBinding,
 } from '../types/api';
 
-type WizardStep = 'organization' | 'project' | 'options' | 'confirm' | 'importing';
+type WizardStep = 'organization' | 'project' | 'options' | 'confirm';
 
 interface Props {
   env: LocalEnvironment;
@@ -33,10 +33,6 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
 
   const [databaseMode, setDatabaseMode] = useState<'schema-only' | 'schema-and-data'>('schema-only');
   const [submitting, setSubmitting] = useState(false);
-  const [bindingResult, setBindingResult] = useState<LocalEnvironmentBinding | null>(null);
-  const [envName, setEnvName] = useState('');
-  const [importStatus, setImportStatus] = useState<'starting' | 'running' | 'completed' | 'failed'>('starting');
-  const [importError, setImportError] = useState('');
 
   async function loadOrgs() {
     setOrgsLoading(true);
@@ -92,7 +88,6 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
       });
 
       const createdEnvName = `${env.name || env.apex_domain}-main`;
-      let envCreated = false;
       try {
         await syncApi.createEnvironmentFor({
           name: createdEnvName,
@@ -104,25 +99,14 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
           target_container: 'supabase-db',
           sync_storage_buckets: true,
         }, env.id);
-        envCreated = true;
       } catch (envErr) {
         const msg = envErr instanceof Error ? envErr.message : '';
-        if (msg.includes('already exists')) {
-          envCreated = true;
-        } else {
+        if (!msg.includes('already exists')) {
           console.warn('[connect] environment creation on local sync-api failed', envErr);
         }
       }
 
-      setBindingResult(binding);
-      setEnvName(createdEnvName);
-
-      if (envCreated) {
-        setStep('importing');
-        setImportStatus('starting');
-      } else {
-        onComplete(binding);
-      }
+      onComplete(binding);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to create binding');
       setSubmitting(false);
@@ -139,7 +123,6 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
     { key: 'project', label: 'Project', icon: FolderOpen },
     { key: 'options', label: 'Options', icon: Database },
     { key: 'confirm', label: 'Confirm', icon: CheckCircle2 },
-    { key: 'importing', label: 'Import', icon: Download },
   ];
 
   const currentIdx = steps.findIndex(s => s.key === step);
@@ -157,14 +140,12 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
             <p className="text-xs text-gray-500">Pull schema from a hosted project into this local environment</p>
           </div>
         </div>
-        {step !== 'importing' && (
-          <button
-            onClick={onCancel}
-            className="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded-lg transition-colors"
-          >
-            <X className="w-5 h-5" />
-          </button>
-        )}
+        <button
+          onClick={onCancel}
+          className="p-1.5 text-gray-400 hover:text-gray-200 hover:bg-gray-800 rounded-lg transition-colors"
+        >
+          <X className="w-5 h-5" />
+        </button>
       </div>
 
       {/* Step indicators */}
@@ -193,7 +174,7 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
 
       {/* Content */}
       <div className="p-6 min-h-[280px]">
-        {error && step !== 'importing' && (
+        {error && (
           <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-sm text-red-400 mb-4">
             {error}
           </div>
@@ -236,19 +217,6 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
             submitting={submitting}
             onConfirm={handleConfirm}
             onBack={() => setStep('options')}
-          />
-        )}
-
-        {step === 'importing' && bindingResult && (
-          <ImportingStep
-            envName={envName}
-            localEnvironmentId={env.id}
-            databaseMode={databaseMode}
-            status={importStatus}
-            setStatus={setImportStatus}
-            importError={importError}
-            setImportError={setImportError}
-            onDone={() => onComplete(bindingResult)}
           />
         )}
       </div>
@@ -479,7 +447,7 @@ function ConfirmStep({ orgName, projectName, projectRef, databaseMode, envName, 
       </div>
 
       <p className="text-xs text-gray-500">
-        This will connect your local environment to the remote project and configure sync. You can trigger the initial import afterward.
+        This will connect your local environment to the remote project. After connecting, use "Pull Latest" to import the schema.
       </p>
 
       <div className="flex justify-end gap-3 pt-2">
@@ -503,150 +471,9 @@ function ConfirmStep({ orgName, projectName, projectRef, databaseMode, envName, 
           ) : (
             <>
               <CheckCircle2 className="w-4 h-4" />
-              Connect and Configure
+              Connect
             </>
           )}
-        </button>
-      </div>
-    </div>
-  );
-}
-
-function ImportingStep({
-  envName,
-  localEnvironmentId,
-  databaseMode,
-  status,
-  setStatus,
-  importError,
-  setImportError,
-  onDone,
-}: {
-  envName: string;
-  localEnvironmentId: string;
-  databaseMode: string;
-  status: 'starting' | 'running' | 'completed' | 'failed';
-  setStatus: (s: 'starting' | 'running' | 'completed' | 'failed') => void;
-  importError: string;
-  setImportError: (s: string) => void;
-  onDone: () => void;
-}) {
-  const startedRef = useRef(false);
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
-
-  useEffect(() => {
-    if (startedRef.current) return;
-    startedRef.current = true;
-
-    async function startImport() {
-      try {
-        const job = await syncApi.resetDestination(
-          envName,
-          {
-            confirm: 'RESET DESTINATION',
-            reset_database: true,
-            reset_edge_functions: databaseMode === 'schema-and-data',
-          },
-          localEnvironmentId,
-        );
-
-        setStatus('running');
-
-        pollRef.current = setInterval(async () => {
-          try {
-            const updated = await syncApi.getJob(job.id, localEnvironmentId);
-            if (updated.status === 'succeeded') {
-              if (pollRef.current) clearInterval(pollRef.current);
-              setStatus('completed');
-            } else if (updated.status === 'failed') {
-              if (pollRef.current) clearInterval(pollRef.current);
-              setStatus('failed');
-              setImportError(updated.output || 'Import job failed');
-            }
-          } catch {
-            // polling error is transient, keep trying
-          }
-        }, 4000);
-      } catch (e) {
-        setStatus('failed');
-        setImportError(e instanceof Error ? e.message : 'Failed to start import');
-      }
-    }
-
-    startImport();
-
-    return () => {
-      if (pollRef.current) clearInterval(pollRef.current);
-    };
-  }, [envName, localEnvironmentId, databaseMode, setStatus, setImportError]);
-
-  if (status === 'starting' || status === 'running') {
-    return (
-      <div className="flex flex-col items-center justify-center py-12 gap-4">
-        <div className="w-12 h-12 rounded-full bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-          <Loader2 className="w-6 h-6 text-blue-400 animate-spin" />
-        </div>
-        <div className="text-center">
-          <p className="text-sm font-medium text-gray-200">
-            {status === 'starting' ? 'Starting import...' : 'Importing schema to local environment...'}
-          </p>
-          <p className="text-xs text-gray-500 mt-1.5">
-            This may take a minute. Pulling {databaseMode === 'schema-and-data' ? 'schema and data' : 'schema'} from the remote project.
-          </p>
-        </div>
-      </div>
-    );
-  }
-
-  if (status === 'failed') {
-    return (
-      <div className="space-y-5">
-        <div className="flex flex-col items-center justify-center py-8 gap-4">
-          <div className="w-12 h-12 rounded-full bg-red-500/10 border border-red-500/20 flex items-center justify-center">
-            <AlertTriangle className="w-6 h-6 text-red-400" />
-          </div>
-          <div className="text-center">
-            <p className="text-sm font-medium text-red-300">Import failed</p>
-            {importError && (
-              <p className="text-xs text-gray-400 mt-1.5 max-w-sm">{importError}</p>
-            )}
-          </div>
-        </div>
-        <p className="text-xs text-gray-500 text-center">
-          The connection was saved. You can retry by clicking "Pull Latest" on the connected project card.
-        </p>
-        <div className="flex justify-center">
-          <button
-            onClick={onDone}
-            className="inline-flex items-center gap-2 px-5 py-2.5 bg-gray-800 hover:bg-gray-700 text-white text-sm font-medium rounded-lg transition-colors border border-gray-700"
-          >
-            Continue
-          </button>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-5">
-      <div className="flex flex-col items-center justify-center py-8 gap-4">
-        <div className="w-12 h-12 rounded-full bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-          <CheckCircle2 className="w-6 h-6 text-emerald-400" />
-        </div>
-        <div className="text-center">
-          <p className="text-sm font-medium text-emerald-300">Import complete</p>
-          <p className="text-xs text-gray-400 mt-1.5">
-            Schema has been pulled from the remote project into your local environment.
-          </p>
-        </div>
-      </div>
-      <div className="flex justify-center">
-        <button
-          onClick={onDone}
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-colors"
-        >
-          <CheckCircle2 className="w-4 h-4" />
-          Done
         </button>
       </div>
     </div>
