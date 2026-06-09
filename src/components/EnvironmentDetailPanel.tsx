@@ -485,6 +485,8 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
   const [resetVpsResult, setResetVpsResult] = useState<{ status?: string; message?: string; ssh_command?: string; output?: string } | null>(null);
   const [resetProgressMsg, setResetProgressMsg] = useState<string | null>(null);
   const [showResetConfirm, setShowResetConfirm] = useState(false);
+  const [diagnosticsLoading, setDiagnosticsLoading] = useState(false);
+  const [diagnosticsResult, setDiagnosticsResult] = useState<{ status?: string; message?: string; checked_at?: string; output?: string } | null>(null);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const resetPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
@@ -569,12 +571,14 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
     stopResetPolling();
     resetPollRef.current = setInterval(async () => {
       try {
-        const ev = await localEnvironmentsService.getLatestResetVpsEvent(env.id);
-        if (ev) {
-          setResetProgressMsg(ev.message);
-          if (ev.status === 'succeeded' || ev.status === 'failed') {
-            stopResetPolling();
-          }
+        const res = await vpsProvisionService.pollResetVps(env.id);
+        setResetProgressMsg(res.message);
+        if (res.status === 'completed' || res.status === 'failed') {
+          setResetVpsResult({ status: res.status, message: res.message, ssh_command: res.ssh_command, output: res.output });
+          setResettingVps(false);
+          setResetProgressMsg(null);
+          stopResetPolling();
+          await onChange();
         }
       } catch { /* ignore polling errors */ }
     }, 4000);
@@ -597,6 +601,12 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
     try {
       const res = await vpsProvisionService.resetVps(env.id);
       setResetVpsResult({ status: res.status, message: res.message, ssh_command: res.ssh_command, output: res.output });
+      if (res.status !== 'running') {
+        setResettingVps(false);
+        setResetProgressMsg(null);
+        stopResetPolling();
+        await onChange();
+      }
     } catch (e: unknown) {
       const err = e as Error & { ssh_command?: string; output?: string };
       setResetVpsResult({
@@ -609,6 +619,30 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
       setResettingVps(false);
       setResetProgressMsg(null);
       stopResetPolling();
+    }
+  }
+
+  async function fetchDiagnostics() {
+    setDiagnosticsLoading(true);
+    setError('');
+    setDiagnosticsResult(null);
+    try {
+      const res = await vpsProvisionService.getServerDiagnostics(env.id);
+      setDiagnosticsResult({
+        status: res.status,
+        message: res.message,
+        checked_at: res.checked_at,
+        output: res.output,
+      });
+    } catch (e: unknown) {
+      const err = e as Error & { output?: string };
+      setDiagnosticsResult({
+        status: 'failed',
+        message: err.message || 'Failed to collect server diagnostics',
+        output: err.output,
+      });
+    } finally {
+      setDiagnosticsLoading(false);
     }
   }
 
@@ -769,6 +803,38 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
         </div>
       )}
 
+      {/* Server diagnostics */}
+      {(diagnosticsLoading || diagnosticsResult) && (
+        <div className={`border rounded-lg px-3 py-2.5 text-xs space-y-2 ${
+          diagnosticsResult?.status === 'failed' ? 'bg-red-500/5 border-red-500/20' : 'bg-gray-900 border-gray-700'
+        }`}>
+          {diagnosticsLoading && (
+            <p className="text-blue-300 font-medium flex items-center gap-2">
+              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              Collecting server diagnostics over SSH...
+            </p>
+          )}
+          {diagnosticsResult?.message && (
+            <p className={diagnosticsResult.status === 'failed' ? 'text-red-300 font-medium' : 'text-gray-300 font-medium'}>
+              {diagnosticsResult.message}
+              {diagnosticsResult.checked_at && (
+                <span className="ml-2 text-gray-500 font-normal">{new Date(diagnosticsResult.checked_at).toLocaleTimeString()}</span>
+              )}
+            </p>
+          )}
+          {diagnosticsResult?.output && (
+            <details className="mt-2" open>
+              <summary className="text-gray-400 cursor-pointer hover:text-gray-300 transition-colors">
+                Server diagnostics
+              </summary>
+              <pre className="mt-1.5 text-[11px] text-gray-400 font-mono bg-gray-950 border border-gray-700 rounded p-2 max-h-96 overflow-auto whitespace-pre-wrap break-all">
+                {diagnosticsResult.output}
+              </pre>
+            </details>
+          )}
+        </div>
+      )}
+
       {/* Diagnostic guidance when failures present */}
       {hasFailures && results && (
         <div className="space-y-3 pt-2 border-t border-gray-800">
@@ -854,6 +920,19 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
                     <p className="text-xs text-gray-500">Tears down all containers, removes data, and runs a fresh install</p>
                   </div>
                   {resettingVps && <Loader2 className="w-3.5 h-3.5 text-red-400 animate-spin" />}
+                </button>
+
+                <button
+                  onClick={fetchDiagnostics}
+                  disabled={diagnosticsLoading}
+                  className="w-full flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-750 border border-gray-700 rounded-lg text-left transition-colors group"
+                >
+                  <Download className="w-4 h-4 text-gray-500 group-hover:text-gray-400 flex-shrink-0" />
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs text-gray-300 font-medium">Fetch Server Diagnostics</p>
+                    <p className="text-xs text-gray-500">Collect Docker status, certificate issuer, and install/reset logs over SSH</p>
+                  </div>
+                  {diagnosticsLoading && <Loader2 className="w-3.5 h-3.5 text-gray-500 animate-spin" />}
                 </button>
 
                 <a
@@ -1246,10 +1325,14 @@ function DangerZoneSection({ env, onDelete, onChange }: { env: LocalEnvironment;
     stopPolling();
     pollRef.current = setInterval(async () => {
       try {
-        const ev = await localEnvironmentsService.getLatestResetVpsEvent(env.id);
-        if (ev) {
-          setProgressMsg(ev.message);
-          if (ev.status === 'succeeded' || ev.status === 'failed') stopPolling();
+        const res = await vpsProvisionService.pollResetVps(env.id);
+        setProgressMsg(res.message);
+        if (res.status === 'completed' || res.status === 'failed') {
+          setResetResult({ status: res.status, message: res.message, output: res.output });
+          setResetting(false);
+          setProgressMsg(null);
+          stopPolling();
+          await onChange();
         }
       } catch { /* ignore */ }
     }, 4000);
@@ -1273,11 +1356,15 @@ function DangerZoneSection({ env, onDelete, onChange }: { env: LocalEnvironment;
     try {
       const res = await vpsProvisionService.resetVps(env.id);
       setResetResult({ status: res.status, message: res.message, output: res.output });
-      await onChange();
+      if (res.status !== 'running') {
+        setResetting(false);
+        setProgressMsg(null);
+        stopPolling();
+        await onChange();
+      }
     } catch (e: unknown) {
       const err = e as Error & { output?: string };
       setResetResult({ status: 'failed', message: err.message || 'Reset failed', output: err.output });
-    } finally {
       setResetting(false);
       setProgressMsg(null);
       stopPolling();
