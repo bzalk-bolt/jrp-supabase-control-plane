@@ -129,6 +129,11 @@ export async function listEnvironments(): Promise<Environment[]> {
   return data.environments;
 }
 
+export async function listDefaultEnvironments(): Promise<Environment[]> {
+  const data = await request<{ environments: Environment[] }>('/v1/environments', { localEnvironmentId: '' });
+  return data.environments;
+}
+
 export async function getEnvironment(name: string): Promise<Environment> {
   const data = await request<{ environment: Environment }>(`/v1/environments/${encodeURIComponent(name)}`);
   return data.environment;
@@ -136,6 +141,13 @@ export async function getEnvironment(name: string): Promise<Environment> {
 
 export async function getEnvironmentIdentity(name: string): Promise<EnvironmentIdentity> {
   return request<EnvironmentIdentity>(`/v1/environments/${encodeURIComponent(name)}/identity`);
+}
+
+export async function getDefaultEnvironmentIdentity(name: string): Promise<EnvironmentIdentity> {
+  return request<EnvironmentIdentity>(
+    `/v1/environments/${encodeURIComponent(name)}/identity`,
+    { localEnvironmentId: '' },
+  );
 }
 
 export async function createEnvironment(env: EnvironmentCreateRequest): Promise<Environment> {
