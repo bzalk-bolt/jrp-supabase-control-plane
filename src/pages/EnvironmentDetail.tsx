@@ -98,6 +98,15 @@ export default function EnvironmentDetail() {
   const sourceName = sourceProject?.name || environment.source_env || 'source';
   const targetName = targetProject?.name || environment.target_env || 'target';
 
+  const sourceLabel = sourceProject?.project_ref
+    ? `${sourceProject.project_ref}.supabase.co`
+    : environment.source_env;
+  const targetLabel = envMeta?.domain
+    ? `db.${envMeta.domain}`
+    : targetProject?.project_ref
+      ? `${targetProject.project_ref}.supabase.co`
+      : environment.target_env;
+
   return (
     <div className="space-y-6">
       <Link to="/environments" className="inline-flex items-center gap-2 text-sm text-gray-400 hover:text-gray-200 transition-colors">
@@ -268,7 +277,7 @@ export default function EnvironmentDetail() {
             <div className="flex-1 mr-4">
               <p className="text-sm font-medium text-gray-200">Reset destination from source</p>
               <p className="text-xs text-gray-400 mt-0.5">
-                Overwrite all data in <span className="font-mono text-gray-300">{targetName}</span> with data from <span className="font-mono text-gray-300">{sourceName}</span>.
+                Overwrite all data in <span className="font-mono text-gray-300">{targetLabel}</span> ({environment.target_env}) with data from <span className="font-mono text-gray-300">{sourceLabel}</span> ({environment.source_env}).
                 This is non-recoverable.
               </p>
             </div>
@@ -286,7 +295,7 @@ export default function EnvironmentDetail() {
             <div className="flex-1 mr-4">
               <p className="text-sm font-medium text-gray-200">Reset source from destination</p>
               <p className="text-xs text-gray-400 mt-0.5">
-                Overwrite all data in <span className="font-mono text-gray-300">{sourceName}</span> with data from <span className="font-mono text-gray-300">{targetName}</span>.
+                Overwrite all data in <span className="font-mono text-gray-300">{sourceLabel}</span> ({environment.source_env}) with data from <span className="font-mono text-gray-300">{targetLabel}</span> ({environment.target_env}).
                 This is non-recoverable.
               </p>
             </div>
