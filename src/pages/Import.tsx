@@ -1409,29 +1409,29 @@ function TargetStep({
             })}
           </div>
 
-          {!hasEligible && (
-            <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 flex items-start gap-3">
-              <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
-              <div className="text-xs text-amber-200">
-                All ready VPS environments are already in use. Create a new one to continue.
-              </div>
-            </div>
-          )}
+          <div className="flex items-center gap-3 pt-1">
+            <button
+              type="button"
+              onClick={handleGoToCreateVps}
+              disabled={navigating}
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-emerald-400 hover:text-emerald-300 bg-transparent hover:bg-emerald-500/10 border border-emerald-500/30 hover:border-emerald-500/50 disabled:opacity-60 rounded-lg transition-all"
+            >
+              {navigating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+              New VPS
+            </button>
+            <span className="text-[11px] text-gray-600">Your progress will be saved as a draft.</span>
+          </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-            <div className="flex items-center gap-3">
-              <button
-                type="button"
-                onClick={handleGoToCreateVps}
-                disabled={navigating}
-                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-emerald-400 hover:text-emerald-300 bg-transparent hover:bg-emerald-500/10 border border-emerald-500/30 hover:border-emerald-500/50 disabled:opacity-60 rounded-lg transition-all"
-              >
-                {navigating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
-                New VPS
-              </button>
-              <span className="text-[11px] text-gray-600">Your progress will be saved as a draft.</span>
-            </div>
-            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-4 py-3 flex items-start gap-3">
+            {!hasEligible && (
+              <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 flex items-start gap-3">
+                <AlertTriangle className="w-4 h-4 text-amber-400 flex-shrink-0 mt-0.5" />
+                <div className="text-xs text-amber-200">
+                  All ready VPS environments are already in use. Create a new one to continue.
+                </div>
+              </div>
+            )}
+            <div className={`bg-blue-500/10 border border-blue-500/20 rounded-lg px-4 py-3 flex items-start gap-3 ${hasEligible ? 'md:col-span-2' : ''}`}>
               <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
               <div className="text-xs text-blue-200">
                 Cloning into a hosted Supabase project will be available in a future release. For now, only local targets are supported.
