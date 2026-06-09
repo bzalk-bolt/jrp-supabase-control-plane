@@ -1276,22 +1276,28 @@ function ProvisioningLogSection({ envId }: { envId: string }) {
   if (events.length === 0) return null;
 
   return (
-    <div className="bg-gray-900 border border-gray-800 rounded-2xl p-5">
+    <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
       <button
         onClick={() => setExpanded(!expanded)}
-        className="w-full flex items-center justify-between text-sm font-semibold text-gray-300 uppercase tracking-wider"
+        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-gray-800/30 transition-colors"
       >
-        <span>Provisioning Log ({events.length} events)</span>
-        <span className="text-xs text-gray-500 normal-case">{expanded ? 'Collapse' : 'Expand'}</span>
+        <Terminal className="w-4 h-4 text-gray-500 flex-shrink-0" />
+        <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider flex-1">
+          Provision Log
+        </h2>
+        <span className="text-xs text-gray-500 font-mono mr-2">{events.length} events</span>
+        <ChevronDown className={cn('w-4 h-4 text-gray-500 transition-transform duration-200', expanded && 'rotate-180')} />
       </button>
       {expanded && (
-        <div className="mt-4 bg-gray-950 border border-gray-800 rounded-lg max-h-64 overflow-y-auto font-mono text-xs">
-          {events.map(ev => (
-            <div key={ev.id} className="flex items-baseline gap-3 px-3 py-1.5 border-b border-gray-800/50 last:border-b-0">
-              <span className="text-gray-600 whitespace-nowrap flex-shrink-0">{new Date(ev.created_at).toLocaleTimeString()}</span>
-              <span className="text-gray-300">{ev.message}</span>
-            </div>
-          ))}
+        <div className="px-5 pb-5">
+          <div className="bg-gray-950 border border-gray-800 rounded-lg max-h-64 overflow-y-auto font-mono text-xs">
+            {events.map(ev => (
+              <div key={ev.id} className="flex items-baseline gap-3 px-3 py-1.5 border-b border-gray-800/50 last:border-b-0">
+                <span className="text-gray-600 whitespace-nowrap flex-shrink-0">{new Date(ev.created_at).toLocaleTimeString()}</span>
+                <span className="text-gray-300">{ev.message}</span>
+              </div>
+            ))}
+          </div>
         </div>
       )}
     </div>

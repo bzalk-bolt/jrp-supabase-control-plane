@@ -108,48 +108,61 @@ export default function SyncOperationsPanel({ env, binding }: Props) {
 
   const modeLabel = binding.database_mode === 'schema-and-data' ? 'schema + data' : 'schema';
 
+  const [expanded, setExpanded] = useState(false);
+
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
       {/* Header */}
-      <div className="px-6 py-4 border-b border-gray-800 flex items-center gap-3">
-        <div className="w-8 h-8 rounded-lg bg-blue-500/10 border border-blue-500/20 flex items-center justify-center">
-          <RefreshCw className="w-4 h-4 text-blue-400" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-white">Sync Operations</h3>
-          <p className="text-xs text-gray-500">Pull {modeLabel} from the remote project into this local environment</p>
-        </div>
-        {status === 'idle' && (
-          <button
-            onClick={() => setShowConfirm(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
-          >
-            <Play className="w-3.5 h-3.5" />
-            Pull Latest
-          </button>
+      <button
+        onClick={() => setExpanded(e => !e)}
+        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-gray-800/30 transition-colors"
+      >
+        <RefreshCw className="w-4 h-4 text-gray-500 flex-shrink-0" />
+        <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider flex-1">
+          Sync Operations
+        </h2>
+        {status !== 'idle' && (
+          <span className="text-xs text-gray-500 font-mono mr-2">{status}</span>
         )}
-        {status === 'succeeded' && (
-          <button
-            onClick={() => setShowConfirm(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-300 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Pull Again
-          </button>
-        )}
-        {status === 'failed' && (
-          <button
-            onClick={() => setShowConfirm(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
-          >
-            <RefreshCw className="w-3.5 h-3.5" />
-            Retry
-          </button>
-        )}
-      </div>
+        <ChevronDown className={cn('w-4 h-4 text-gray-500 transition-transform duration-200', expanded && 'rotate-180')} />
+      </button>
 
-      {/* Status content */}
-      <div className="p-6">
+      {/* Expandable content */}
+      {expanded && (
+        <div className="px-5 pb-5 space-y-4">
+          {/* Action buttons */}
+          <div className="flex items-center justify-end">
+            {status === 'idle' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowConfirm(true); }}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
+              >
+                <Play className="w-3.5 h-3.5" />
+                Pull Latest
+              </button>
+            )}
+            {status === 'succeeded' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowConfirm(true); }}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-300 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Pull Again
+              </button>
+            )}
+            {status === 'failed' && (
+              <button
+                onClick={(e) => { e.stopPropagation(); setShowConfirm(true); }}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
+              >
+                <RefreshCw className="w-3.5 h-3.5" />
+                Retry
+              </button>
+            )}
+          </div>
+
+          {/* Status content */}
+          <div>
         {status === 'idle' && (
           <div className="text-sm text-gray-400">
             No sync has been run yet. Click "Pull Latest" to import {modeLabel} from the remote project.
@@ -235,7 +248,9 @@ export default function SyncOperationsPanel({ env, binding }: Props) {
             )}
           </div>
         )}
-      </div>
+          </div>
+        </div>
+      )}
 
       {/* Confirmation modal */}
       {showConfirm && (

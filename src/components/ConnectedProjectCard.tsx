@@ -1,9 +1,13 @@
 import { useState } from 'react';
 import {
-  Cloud, Database, Unlink, Loader2, CheckCircle2, AlertTriangle,
+  Cloud, Database, Unlink, Loader2, AlertTriangle, ChevronDown,
 } from 'lucide-react';
 import { localEnvironmentsService } from '../services';
 import type { LocalEnvironment, LocalEnvironmentBinding } from '../types/api';
+
+function cn(...parts: Array<string | false | null | undefined>): string {
+  return parts.filter(Boolean).join(' ');
+}
 
 interface Props {
   env: LocalEnvironment;
@@ -12,6 +16,7 @@ interface Props {
 }
 
 export default function ConnectedProjectCard({ env, binding, onDisconnected }: Props) {
+  const [expanded, setExpanded] = useState(false);
   const [showDisconnect, setShowDisconnect] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [error, setError] = useState('');
@@ -31,45 +36,45 @@ export default function ConnectedProjectCard({ env, binding, onDisconnected }: P
 
   return (
     <div className="bg-gray-900 border border-gray-800 rounded-2xl overflow-hidden">
-      <div className="px-6 py-4 border-b border-gray-800 flex items-center gap-3">
-        <div className="w-8 h-8 rounded-lg bg-emerald-500/10 border border-emerald-500/20 flex items-center justify-center">
-          <Cloud className="w-4 h-4 text-emerald-400" />
-        </div>
-        <div className="flex-1 min-w-0">
-          <h3 className="text-sm font-semibold text-white">Connected Remote Project</h3>
-          <p className="text-xs text-gray-500">This local environment is linked to a hosted Supabase project</p>
-        </div>
-        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-[10px] font-medium text-emerald-400 uppercase tracking-wider">
-          <CheckCircle2 className="w-3 h-3" />
-          Connected
-        </span>
-      </div>
+      <button
+        onClick={() => setExpanded(e => !e)}
+        className="w-full flex items-center gap-3 px-5 py-4 text-left hover:bg-gray-800/30 transition-colors"
+      >
+        <Cloud className="w-4 h-4 text-gray-500 flex-shrink-0" />
+        <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider flex-1">
+          Remote Project
+        </h2>
+        <span className="text-xs text-gray-500 font-mono mr-2">{binding.remote_project_ref}</span>
+        <ChevronDown className={cn('w-4 h-4 text-gray-500 transition-transform duration-200', expanded && 'rotate-180')} />
+      </button>
 
-      <div className="p-6 space-y-4">
-        {error && (
-          <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-sm text-red-400 flex items-center gap-2">
-            <AlertTriangle className="w-4 h-4 flex-shrink-0" />
-            {error}
+      {expanded && (
+        <div className="px-5 pb-5 space-y-4">
+          {error && (
+            <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-sm text-red-400 flex items-center gap-2">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0" />
+              {error}
+            </div>
+          )}
+
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+            <InfoCard label="Organization" value={binding.remote_organization_name || '\u2014'} icon={<Cloud className="w-3.5 h-3.5 text-blue-400" />} />
+            <InfoCard label="Project Ref" value={binding.remote_project_ref} mono icon={<Database className="w-3.5 h-3.5 text-emerald-400" />} />
+            <InfoCard label="Import Mode" value={binding.database_mode === 'schema-and-data' ? 'Schema + Data' : 'Schema Only'} />
+            <InfoCard label="Connected" value={new Date(binding.bound_at).toLocaleDateString()} />
           </div>
-        )}
 
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-          <InfoCard label="Organization" value={binding.remote_organization_name || '\u2014'} icon={<Cloud className="w-3.5 h-3.5 text-blue-400" />} />
-          <InfoCard label="Project Ref" value={binding.remote_project_ref} mono icon={<Database className="w-3.5 h-3.5 text-emerald-400" />} />
-          <InfoCard label="Import Mode" value={binding.database_mode === 'schema-and-data' ? 'Schema + Data' : 'Schema Only'} />
-          <InfoCard label="Connected" value={new Date(binding.bound_at).toLocaleDateString()} />
+          <div className="flex items-center justify-end pt-2 border-t border-gray-800">
+            <button
+              onClick={(e) => { e.stopPropagation(); setShowDisconnect(true); }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-red-400 hover:text-red-300 bg-red-500/5 hover:bg-red-500/10 border border-red-500/20 hover:border-red-500/30 rounded-lg transition-colors"
+            >
+              <Unlink className="w-3.5 h-3.5" />
+              Disconnect
+            </button>
+          </div>
         </div>
-
-        <div className="flex items-center justify-end pt-2 border-t border-gray-800">
-          <button
-            onClick={() => setShowDisconnect(true)}
-            className="inline-flex items-center gap-1.5 px-3 py-2 text-xs font-medium text-red-400 hover:text-red-300 bg-red-500/5 hover:bg-red-500/10 border border-red-500/20 hover:border-red-500/30 rounded-lg transition-colors"
-          >
-            <Unlink className="w-3.5 h-3.5" />
-            Disconnect
-          </button>
-        </div>
-      </div>
+      )}
 
       {showDisconnect && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
