@@ -125,7 +125,7 @@ export default function Layout() {
         </div>
       </aside>
       <main className={`flex-1 transition-all duration-200 ease-in-out ${collapsed ? 'ml-[68px]' : 'ml-64'}`}>
-        <div className="p-8 max-w-7xl mx-auto">
+        <div className="px-4 py-6 lg:px-6">
           {hasToken === null ? (
             <AppLoadingSkeleton />
           ) : hasToken ? (
