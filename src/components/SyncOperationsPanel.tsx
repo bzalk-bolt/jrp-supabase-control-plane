@@ -121,9 +121,9 @@ export default function SyncOperationsPanel({ env, binding }: Props) {
         <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider flex-1">
           Sync Operations
         </h2>
-        {status !== 'idle' && (
-          <span className="text-xs text-gray-500 font-mono mr-2">{status}</span>
-        )}
+        <span className="text-xs text-gray-500 font-mono mr-2">
+          {job?.finished_at_ms ? new Date(job.finished_at_ms).toLocaleDateString() : 'never synced'}
+        </span>
         <ChevronDown className={cn('w-4 h-4 text-gray-500 transition-transform duration-200', expanded && 'rotate-180')} />
       </button>
 
