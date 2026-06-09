@@ -1286,9 +1286,11 @@ function TargetStep({
   onSelectLocalEnv: (id: string | null) => void;
   onSaveDraft: () => Promise<void>;
 }) {
+  const navigate = useNavigate();
   const [localEnvs, setLocalEnvs] = useState<LocalEnvironment[]>([]);
   const [bindings, setBindings] = useState<LocalEnvironmentBinding[]>([]);
   const [loading, setLoading] = useState(true);
+  const [navigating, setNavigating] = useState(false);
 
   useEffect(() => {
     Promise.all([
@@ -1304,6 +1306,14 @@ function TargetStep({
       }
     }).catch(() => {}).finally(() => setLoading(false));
   }, []);
+
+  async function handleGoToCreateVps() {
+    setNavigating(true);
+    try {
+      await onSaveDraft();
+    } catch {}
+    navigate('/local-environments/new');
+  }
 
   const boundIds = new Set(bindings.map(b => b.local_environment_id));
   const readyEnvs = localEnvs.filter(e => e.vps_status === 'ready');
@@ -1333,14 +1343,15 @@ function TargetStep({
               You need to provision a VPS before you can import. Create one first, then return here to continue.
             </p>
           </div>
-          <Link
-            to="/local-environments/new"
-            onClick={() => { onSaveDraft(); }}
-            className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-colors"
+          <button
+            type="button"
+            onClick={handleGoToCreateVps}
+            disabled={navigating}
+            className="inline-flex items-center gap-2 px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white text-sm font-medium rounded-lg transition-colors"
           >
-            <Plus className="w-4 h-4" />
+            {navigating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
             Create local environment
-          </Link>
+          </button>
           <p className="text-[11px] text-gray-600">Your progress will be saved as a draft.</p>
         </div>
       ) : (
@@ -1407,16 +1418,25 @@ function TargetStep({
             </div>
           )}
 
-          <div className="flex items-center gap-3 pt-1">
-            <Link
-              to="/local-environments/new"
-              onClick={() => { onSaveDraft(); }}
-              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-emerald-400 hover:text-emerald-300 bg-transparent hover:bg-emerald-500/10 border border-emerald-500/30 hover:border-emerald-500/50 rounded-lg transition-all"
-            >
-              <Plus className="w-3.5 h-3.5" />
-              New VPS
-            </Link>
-            <span className="text-[11px] text-gray-600">Your progress will be saved as a draft.</span>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div className="flex items-center gap-3">
+              <button
+                type="button"
+                onClick={handleGoToCreateVps}
+                disabled={navigating}
+                className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-emerald-400 hover:text-emerald-300 bg-transparent hover:bg-emerald-500/10 border border-emerald-500/30 hover:border-emerald-500/50 disabled:opacity-60 rounded-lg transition-all"
+              >
+                {navigating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                New VPS
+              </button>
+              <span className="text-[11px] text-gray-600">Your progress will be saved as a draft.</span>
+            </div>
+            <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-4 py-3 flex items-start gap-3">
+              <Info className="w-4 h-4 text-blue-400 flex-shrink-0 mt-0.5" />
+              <div className="text-xs text-blue-200">
+                Cloning into a hosted Supabase project will be available in a future release. For now, only local targets are supported.
+              </div>
+            </div>
           </div>
         </>
       )}
@@ -1454,13 +1474,6 @@ function TargetStep({
           </p>
         </div>
       )}
-
-      <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-4 py-3 flex items-start gap-3">
-        <Info className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
-        <div className="text-xs text-blue-200">
-          Cloning into a hosted Supabase project will be available in a future release. For now, only local targets are supported.
-        </div>
-      </div>
     </div>
   );
 }
