@@ -308,38 +308,6 @@ export async function repairSsl(localEnvId: string): Promise<RepairSslResponse> 
   return body as RepairSslResponse;
 }
 
-export interface RepairSyncApiClientResponse {
-  status: string;
-  message: string;
-  ssh_command: string;
-  output?: string;
-  error?: string;
-}
-
-export async function repairSyncApiClient(
-  localEnvId: string,
-  postgresClientMajor: string
-): Promise<RepairSyncApiClientResponse> {
-  const res = await authedFetch('repair-sync-api-client', {
-    method: 'POST',
-    body: JSON.stringify({
-      local_environment_id: localEnvId,
-      postgres_client_major: postgresClientMajor,
-    }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const resp: RepairSyncApiClientResponse = {
-      status: 'failed',
-      message: body?.error || `Sync API client repair failed (${res.status})`,
-      ssh_command: body?.ssh_command || '',
-      output: body?.output,
-    };
-    throw Object.assign(new Error(resp.message), { ssh_command: resp.ssh_command, output: resp.output });
-  }
-  return body as RepairSyncApiClientResponse;
-}
-
 export interface ResetVpsResponse {
   status: string;
   message: string;

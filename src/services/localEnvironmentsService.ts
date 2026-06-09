@@ -51,27 +51,6 @@ export function composeFullHostname(subdomain: string, apex: string): string {
   return `${sub}.${root}`;
 }
 
-export function serviceBaseDomain(env: { apex_domain?: string | null; subdomain?: string | null; full_hostname?: string | null }): string {
-  const apex = (env.apex_domain || '').trim().toLowerCase();
-  const sub = (env.subdomain || '').trim().toLowerCase();
-  const full = (env.full_hostname || '').trim().toLowerCase();
-  if (sub) return full || composeFullHostname(sub, apex);
-  return apex || full;
-}
-
-export function serviceHostname(
-  service: 'supabase' | 'studio' | 'auth' | 'sync-api',
-  env: { apex_domain?: string | null; subdomain?: string | null; full_hostname?: string | null }
-): string {
-  const base = serviceBaseDomain(env);
-  return base ? `${service}.${base}` : '';
-}
-
-export function syncApiUrlForEnvironment(env: { apex_domain?: string | null; subdomain?: string | null; full_hostname?: string | null }): string {
-  const hostname = serviceHostname('sync-api', env);
-  return hostname ? `https://${hostname}` : '';
-}
-
 // --- Local environments ---
 
 export async function listLocalEnvironments(): Promise<LocalEnvironment[]> {
@@ -265,25 +244,6 @@ export async function createBinding(input: {
     .maybeSingle();
   if (error) throw error;
   if (!data) throw new Error('Failed to create binding');
-  return data as LocalEnvironmentBinding;
-}
-
-export async function updateBinding(id: string, input: {
-  database_mode?: string;
-  remote_db_url?: string;
-}): Promise<LocalEnvironmentBinding> {
-  const updateRow: Record<string, unknown> = {};
-  if (input.database_mode !== undefined) updateRow.database_mode = input.database_mode;
-  if (input.remote_db_url !== undefined) updateRow.remote_db_url = input.remote_db_url;
-
-  const { data, error } = await supabase
-    .from('local_environment_bindings')
-    .update(updateRow)
-    .eq('id', id)
-    .select()
-    .maybeSingle();
-  if (error) throw error;
-  if (!data) throw new Error('Binding not found');
   return data as LocalEnvironmentBinding;
 }
 

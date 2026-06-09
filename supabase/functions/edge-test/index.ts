@@ -66,27 +66,12 @@ function execSsh(
 async function lookupEnv(localEnvId: string) {
   const { data, error } = await admin
     .from("local_environments")
-    .select("vps_ip, vps_root_password, apex_domain, subdomain, full_hostname, user_id")
+    .select("vps_ip, vps_root_password, apex_domain, user_id")
     .eq("id", localEnvId)
     .maybeSingle();
   if (error) throw new Error(error.message);
   if (!data) return null;
-  return data as {
-    vps_ip: string;
-    vps_root_password: string;
-    apex_domain: string;
-    subdomain: string;
-    full_hostname: string;
-    user_id: string;
-  };
-}
-
-function environmentBaseDomain(env: { apex_domain?: string | null; subdomain?: string | null; full_hostname?: string | null }): string {
-  const apex = (env.apex_domain || "").trim().toLowerCase();
-  const sub = (env.subdomain || "").trim().toLowerCase();
-  const full = (env.full_hostname || "").trim().toLowerCase();
-  if (sub) return full || `${sub}.${apex}`;
-  return apex || full;
+  return data as { vps_ip: string; vps_root_password: string; apex_domain: string; user_id: string };
 }
 
 // --- Operation: vps-reset-start ---
@@ -107,7 +92,7 @@ async function handleVpsResetStart(req: Request): Promise<Response> {
   if (!env.vps_ip) return jsonResponse({ error: "No VPS IP" }, 400);
   if (!env.vps_root_password) return jsonResponse({ error: "No root password stored" }, 400);
 
-  const baseDomain = body.base_domain || environmentBaseDomain(env);
+  const baseDomain = body.base_domain || env.apex_domain;
   if (!baseDomain) return jsonResponse({ error: "No base_domain available" }, 400);
 
   const scriptUrl = body.script_url || DEFAULT_RESET_SCRIPT_URL;

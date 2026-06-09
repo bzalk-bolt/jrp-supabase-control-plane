@@ -25,7 +25,7 @@ const FIELD_DEFS: Array<{
     key: 'sync_api_install_url',
     label: 'Bootstrap script URL (optional)',
     placeholder: 'https://example.com/install.sh',
-    description: 'HTTPS URL of a shell script run on first boot. The platform exports HOSTNAME, SYNC_API_TOKEN, SYNC_API_URL, BASE_DOMAIN, and explicit service domains before executing it. Leave blank to use the platform default.',
+    description: 'HTTPS URL of a shell script run on first boot. The platform exports HOSTNAME, SYNC_API_TOKEN, SYNC_API_URL, and BASE_DOMAIN before executing it. Leave blank to use the platform default.',
     testable: true,
   },
   {

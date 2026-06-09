@@ -10,7 +10,6 @@ import type {
   SupabaseProject,
   LocalEnvironmentBinding,
 } from '../types/api';
-import { getSyncEnvironmentName } from '../utils/syncEnvironmentName';
 
 type WizardStep = 'organization' | 'project' | 'connection' | 'options' | 'confirm';
 
@@ -91,7 +90,7 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
         remote_db_url: remoteDbUrl.trim(),
       });
 
-      const createdEnvName = getSyncEnvironmentName(env);
+      const createdEnvName = `${env.name || env.apex_domain}-main`;
       try {
         await syncApi.createEnvironmentFor({
           name: createdEnvName,

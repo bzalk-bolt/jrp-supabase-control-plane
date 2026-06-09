@@ -132,7 +132,6 @@ function ServerOverviewSection({ env }: { env: LocalEnvironment }) {
   const [loadingVm, setLoadingVm] = useState(false);
   const [copied, setCopied] = useState('');
   const [expanded, setExpanded] = useState(false);
-  const serviceBase = localEnvironmentsService.serviceBaseDomain(env);
 
   useEffect(() => {
     if (!env.vps_id) return;
@@ -167,7 +166,7 @@ function ServerOverviewSection({ env }: { env: LocalEnvironment }) {
         <div className="px-5 pb-5">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3">
             <InfoRow label="Apex Domain" value={env.apex_domain} mono />
-            <InfoRow label="Service Hosts" value={serviceBase ? `supabase / studio / auth / sync-api .${serviceBase}` : ''} mono />
+            <InfoRow label="Service Hosts" value={env.apex_domain ? `supabase / studio / auth / sync-api .${env.apex_domain}` : ''} mono />
             <div className="flex items-center gap-2">
               <InfoRow label="Server IP" value={env.vps_ip} mono />
               {env.vps_ip && (
@@ -242,9 +241,7 @@ function SetupProgressSection({ env, onChange }: { env: LocalEnvironment; onChan
       try {
         await vpsProvisionService.pollProvision(env.id);
         await onChange();
-      } catch (err) {
-        void err;
-      }
+      } catch {}
       if (!stoppedRef.current) {
         timer = setTimeout(tick, 6000);
       }
@@ -482,9 +479,6 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
   const [repairingSsl, setRepairingSsl] = useState(false);
   const [sslRepairResult, setSslRepairResult] = useState<{ status?: string; message?: string; ssh_command?: string; output?: string } | null>(null);
   const [repairProgressMsg, setRepairProgressMsg] = useState<string | null>(null);
-  const [repairingSyncClient, setRepairingSyncClient] = useState(false);
-  const [syncClientMajor, setSyncClientMajor] = useState('17');
-  const [syncClientRepairResult, setSyncClientRepairResult] = useState<{ status?: string; message?: string; ssh_command?: string; output?: string } | null>(null);
   const [resettingVps, setResettingVps] = useState(false);
   const [resetVpsResult, setResetVpsResult] = useState<{ status?: string; message?: string; ssh_command?: string; output?: string } | null>(null);
   const [resetProgressMsg, setResetProgressMsg] = useState<string | null>(null);
@@ -566,31 +560,6 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
       setRepairingSsl(false);
       setRepairProgressMsg(null);
       stopPolling();
-    }
-  }
-
-  async function repairSyncClient() {
-    setRepairingSyncClient(true);
-    setError('');
-    setSyncClientRepairResult(null);
-    try {
-      const res = await vpsProvisionService.repairSyncApiClient(env.id, syncClientMajor);
-      setSyncClientRepairResult({
-        status: res.status,
-        message: res.message,
-        ssh_command: res.ssh_command,
-        output: res.output,
-      });
-    } catch (e: unknown) {
-      const err = e as Error & { ssh_command?: string; output?: string };
-      setSyncClientRepairResult({
-        status: 'failed',
-        message: err.message || 'Sync API client repair failed',
-        ssh_command: err.ssh_command,
-        output: err.output,
-      });
-    } finally {
-      setRepairingSyncClient(false);
     }
   }
 
@@ -745,56 +714,6 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
         </div>
       )}
 
-      {/* Sync API Postgres client repair status */}
-      {(repairingSyncClient || syncClientRepairResult) && (
-        <div className={`border rounded-lg px-3 py-2.5 text-xs space-y-2 ${
-          syncClientRepairResult?.status === 'completed' ? 'bg-emerald-500/5 border-emerald-500/20' :
-          syncClientRepairResult?.status === 'failed' ? 'bg-red-500/5 border-red-500/20' :
-          'bg-blue-500/5 border-blue-500/20'
-        }`}>
-          {repairingSyncClient && (
-            <p className="text-blue-300 font-medium flex items-center gap-2">
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              Rebuilding sync-api with PostgreSQL client {syncClientMajor}...
-            </p>
-          )}
-          {syncClientRepairResult?.message && (
-            <p className={
-              syncClientRepairResult.status === 'completed' ? 'text-emerald-300 font-medium' :
-              syncClientRepairResult.status === 'failed' ? 'text-red-300 font-medium' :
-              'text-blue-300'
-            }>{syncClientRepairResult.message}</p>
-          )}
-          {syncClientRepairResult?.output && (
-            <details className="mt-2" open={syncClientRepairResult.status === 'failed'}>
-              <summary className="text-gray-400 cursor-pointer hover:text-gray-300 transition-colors">
-                Script output
-              </summary>
-              <pre className="mt-1.5 text-[11px] text-gray-400 font-mono bg-gray-900 border border-gray-700 rounded p-2 max-h-64 overflow-auto whitespace-pre-wrap break-all">
-                {syncClientRepairResult.output}
-              </pre>
-            </details>
-          )}
-          {syncClientRepairResult?.ssh_command && !syncClientRepairResult?.output && (
-            <div className="mt-2 space-y-1">
-              <p className="text-gray-400">If automated repair fails, run this command manually via SSH:</p>
-              <p className="text-gray-300 font-mono select-all bg-gray-900 px-2 py-1.5 rounded border border-gray-700 break-all">
-                {syncClientRepairResult.ssh_command}
-              </p>
-            </div>
-          )}
-          {syncClientRepairResult?.status === 'failed' && !repairingSyncClient && (
-            <button
-              onClick={() => { setSyncClientRepairResult(null); repairSyncClient(); }}
-              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium rounded transition-colors"
-            >
-              <RotateCcw className="w-3 h-3" />
-              Retry Sync API Client Repair
-            </button>
-          )}
-        </div>
-      )}
-
       {/* VPS Reset status */}
       {(resettingVps || resetVpsResult) && (
         <div className={`border rounded-lg px-3 py-2.5 text-xs space-y-2 ${
@@ -848,43 +767,39 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
         </div>
       )}
 
-      {/* Diagnostic guidance and maintenance actions */}
-      {(results || env.vps_ip) && (
+      {/* Diagnostic guidance when failures present */}
+      {hasFailures && results && (
         <div className="space-y-3 pt-2 border-t border-gray-800">
-          {hasFailures && (
-            <>
-              {hasSslIssue && !repairingSsl && (
-                <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2.5 text-xs space-y-2">
-                  <p className="text-amber-300 font-medium">SSL Certificate Issue</p>
-                  <p className="text-gray-400">The server is reachable but HTTPS connections are failing. This usually means SSL certificates were generated before DNS was properly configured. A server restart will trigger Traefik to re-request valid certificates.</p>
-                  <button
-                    onClick={() => { setSslRepairResult(null); repairSsl(); }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium rounded transition-colors"
-                  >
-                    <Wrench className="w-3 h-3" />
-                    Run SSL Repair
-                  </button>
-                </div>
-              )}
-              {hasDnsErrors && (
-                <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2.5 text-xs space-y-1">
-                  <p className="text-amber-300 font-medium">DNS not resolving</p>
-                  <p className="text-gray-400">The subdomains are not resolving to your server yet. This typically takes 1-5 minutes after configuring DNS records. If you just set them up, wait a few minutes and try again.</p>
-                </div>
-              )}
-              {!hasDnsErrors && !hasSslIssue && hasConnectionRefused && (
-                <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2.5 text-xs space-y-1">
-                  <p className="text-amber-300 font-medium">Connection refused</p>
-                  <p className="text-gray-400">DNS resolves but services are refusing connections. The post-install script may not have completed successfully, or services haven't started yet. Try re-running the post-install script.</p>
-                </div>
-              )}
-              {!hasDnsErrors && !hasSslIssue && !hasConnectionRefused && tcpOk && (
-                <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2.5 text-xs space-y-1">
-                  <p className="text-amber-300 font-medium">Services partially responding</p>
-                  <p className="text-gray-400">The server is reachable on port 443 but some services are not responding correctly. This may indicate the services are still starting up or need to be reconfigured.</p>
-                </div>
-              )}
-            </>
+          {hasSslIssue && !repairingSsl && (
+            <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2.5 text-xs space-y-2">
+              <p className="text-amber-300 font-medium">SSL Certificate Issue</p>
+              <p className="text-gray-400">The server is reachable but HTTPS connections are failing. This usually means SSL certificates were generated before DNS was properly configured. A server restart will trigger Traefik to re-request valid certificates.</p>
+              <button
+                onClick={() => { setSslRepairResult(null); repairSsl(); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium rounded transition-colors"
+              >
+                <Wrench className="w-3 h-3" />
+                Run SSL Repair
+              </button>
+            </div>
+          )}
+          {hasDnsErrors && (
+            <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2.5 text-xs space-y-1">
+              <p className="text-amber-300 font-medium">DNS not resolving</p>
+              <p className="text-gray-400">The subdomains are not resolving to your server yet. This typically takes 1-5 minutes after configuring DNS records. If you just set them up, wait a few minutes and try again.</p>
+            </div>
+          )}
+          {!hasDnsErrors && !hasSslIssue && hasConnectionRefused && (
+            <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2.5 text-xs space-y-1">
+              <p className="text-amber-300 font-medium">Connection refused</p>
+              <p className="text-gray-400">DNS resolves but services are refusing connections. The post-install script may not have completed successfully, or services haven't started yet. Try re-running the post-install script.</p>
+            </div>
+          )}
+          {!hasDnsErrors && !hasSslIssue && !hasConnectionRefused && tcpOk && (
+            <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2.5 text-xs space-y-1">
+              <p className="text-amber-300 font-medium">Services partially responding</p>
+              <p className="text-gray-400">The server is reachable on port 443 but some services are not responding correctly. This may indicate the services are still starting up or need to be reconfigured.</p>
+            </div>
           )}
 
           <button
@@ -912,32 +827,6 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
                   </div>
                   {repairingSsl && <Loader2 className="w-3.5 h-3.5 text-gray-500 animate-spin" />}
                 </button>
-
-                <div className="w-full flex flex-col sm:flex-row sm:items-center gap-2 px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg">
-                  <Download className="w-4 h-4 text-gray-500 flex-shrink-0" />
-                  <div className="flex-1 min-w-0">
-                    <p className="text-xs text-gray-300 font-medium">Repair Sync API pg_dump</p>
-                    <p className="text-xs text-gray-500">Rebuild sync-api with the selected PostgreSQL client version</p>
-                  </div>
-                  <select
-                    value={syncClientMajor}
-                    onChange={(e) => setSyncClientMajor(e.target.value)}
-                    disabled={repairingSyncClient}
-                    className="h-8 rounded-md bg-gray-950 border border-gray-700 px-2 text-xs text-gray-200 focus:outline-none focus:ring-1 focus:ring-blue-500"
-                    title="PostgreSQL client version"
-                  >
-                    <option value="17">Postgres 17</option>
-                    <option value="16">Postgres 16</option>
-                  </select>
-                  <button
-                    onClick={repairSyncClient}
-                    disabled={repairingSyncClient}
-                    className="inline-flex items-center justify-center gap-1.5 h-8 px-3 rounded-md bg-gray-700 hover:bg-gray-600 disabled:opacity-50 text-xs text-gray-100 font-medium transition-colors"
-                  >
-                    {repairingSyncClient ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wrench className="w-3.5 h-3.5" />}
-                    Repair
-                  </button>
-                </div>
 
                 <button
                   onClick={rerunPostInstall}
@@ -1048,15 +937,15 @@ function DnsSetupPanel({ env, onChange }: { env: LocalEnvironment; onChange: () 
   const [tokenSaving, setTokenSaving] = useState(false);
   const [configResults, setConfigResults] = useState<Array<{ hostname: string; status: string; message?: string }>>([]);
 
-  const baseDomain = localEnvironmentsService.serviceBaseDomain(env);
+  const apexDomain = env.apex_domain;
   const ip = env.vps_ip;
   const records = [
-    { type: 'A', name: baseDomain, value: ip },
-    { type: 'A', name: localEnvironmentsService.serviceHostname('supabase', env), value: ip },
-    { type: 'A', name: localEnvironmentsService.serviceHostname('studio', env), value: ip },
-    { type: 'A', name: localEnvironmentsService.serviceHostname('auth', env), value: ip },
-    { type: 'A', name: localEnvironmentsService.serviceHostname('sync-api', env), value: ip },
-  ].filter(record => record.name);
+    { type: 'A', name: env.full_hostname, value: ip },
+    { type: 'A', name: `supabase.${apexDomain}`, value: ip },
+    { type: 'A', name: `studio.${apexDomain}`, value: ip },
+    { type: 'A', name: `auth.${apexDomain}`, value: ip },
+    { type: 'A', name: `sync-api.${apexDomain}`, value: ip },
+  ];
 
   useEffect(() => {
     settingsService.getProviderConfig().then(cfg => {
@@ -1142,7 +1031,7 @@ function DnsSetupPanel({ env, onChange }: { env: LocalEnvironment; onChange: () 
           Configure DNS A Records
         </h3>
         <p className="text-xs text-gray-400 mt-1">
-          Point <span className="font-mono text-gray-300">{baseDomain}</span> and service subdomains to <span className="font-mono text-gray-300">{ip}</span>.
+          Point <span className="font-mono text-gray-300">{env.full_hostname}</span> and service subdomains to <span className="font-mono text-gray-300">{ip}</span>.
         </p>
       </div>
 
@@ -1203,7 +1092,7 @@ function DnsSetupPanel({ env, onChange }: { env: LocalEnvironment; onChange: () 
               </div>
 
               <p className="text-xs text-gray-400">
-                This will create A records in your Netlify DNS zone for <span className="font-mono text-gray-300">{baseDomain}</span> pointing to <span className="font-mono text-gray-300">{ip}</span>.
+                This will create A records in your Netlify DNS zone for <span className="font-mono text-gray-300">{apexDomain}</span> pointing to <span className="font-mono text-gray-300">{ip}</span>.
                 Existing records will be left untouched.
               </p>
 
