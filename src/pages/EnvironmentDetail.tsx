@@ -1,11 +1,10 @@
 import { useEffect, useState } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
-import { ArrowLeft, Database, ArrowLeftRight, AlertTriangle, RotateCcw, Trash2, X, ExternalLink, ScrollText } from 'lucide-react';
+import { ArrowLeft, Database, ArrowLeftRight, AlertTriangle, RotateCcw, Trash2, X, ExternalLink } from 'lucide-react';
 import { syncApi } from '../services';
 import type { Environment, EnvironmentIdentity } from '../types/api';
 import ResetConfirmModal from '../components/ResetConfirmModal';
 import AppLoadingSkeleton from '../components/AppLoadingSkeleton';
-import MigrationsPanel from '../components/MigrationsPanel';
 
 export default function EnvironmentDetail() {
   const { name } = useParams<{ name: string }>();
@@ -154,25 +153,26 @@ export default function EnvironmentDetail() {
           {sourceProject && (
             <ConfigRow label="Source Project" value={`${sourceProject.name}${sourceProject.organization_name ? ` (${sourceProject.organization_name})` : ''}`} />
           )}
-          <ConfigRow label="Source Container" value={environment.source_container || '\u2014'} />
-          <ConfigRow label="Source DB URL" value={environment.source_db_url || '\u2014'} mono />
+          {environment.source_container && (
+            <ConfigRow label="Source Container" value={environment.source_container} />
+          )}
+          {environment.source_db_url && (
+            <ConfigRow label="Source DB URL" value={environment.source_db_url} mono />
+          )}
           {targetProject && (
             <ConfigRow label="Target Project" value={`${targetProject.name}${targetProject.organization_name ? ` (${targetProject.organization_name})` : ''}`} />
           )}
-          <ConfigRow label="Target Container" value={environment.target_container || '\u2014'} />
-          <ConfigRow label="Target DB URL" value={environment.target_db_url || '\u2014'} mono />
-          <ConfigRow label="Sync Storage Buckets" value={environment.sync_storage_buckets !== false ? 'Yes' : 'No'} />
-        </div>
-      </div>
-
-      {/* Migrations */}
-      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-        <div className="px-5 py-4 border-b border-gray-800 flex items-center gap-2">
-          <ScrollText className="w-4 h-4 text-gray-400" />
-          <h2 className="text-sm font-semibold text-gray-200">Migrations</h2>
-        </div>
-        <div className="p-4">
-          <MigrationsPanel envName={name!} />
+          {environment.target_container && (
+            <ConfigRow label="Target Container" value={environment.target_container} />
+          )}
+          {environment.target_db_url && (
+            <ConfigRow label="Target DB URL" value={environment.target_db_url} mono />
+          )}
+          <ConfigRow label="Source Environment" value={environment.source_env} />
+          <ConfigRow label="Target Environment" value={environment.target_env} />
+          {environment.sync_storage_buckets !== undefined && (
+            <ConfigRow label="Sync Storage Buckets" value={environment.sync_storage_buckets !== false ? 'Yes' : 'No'} />
+          )}
         </div>
       </div>
 
