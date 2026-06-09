@@ -7,8 +7,10 @@ interface SqlCodeBlockProps {
 }
 
 export default function SqlCodeBlock({ code, maxHeight = '400px', showLineNumbers = true }: SqlCodeBlockProps) {
+  const normalizedCode = code.replace(/\\n/g, '\n').trim();
+
   return (
-    <Highlight theme={themes.nightOwl} code={code.trim()} language="sql">
+    <Highlight theme={themes.nightOwl} code={normalizedCode} language="sql">
       {({ tokens, getLineProps, getTokenProps }) => (
         <pre
           className="text-[12px] font-mono leading-relaxed overflow-auto rounded-lg bg-[#011627] p-4"

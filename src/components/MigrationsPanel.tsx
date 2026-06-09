@@ -33,12 +33,15 @@ function formatDuration(ms: number | null): string {
   return `${m}m ${rem}s`;
 }
 
-function StatusBadge({ status }: { status: MigrationSummary['status'] }) {
+type DisplayStatus = MigrationSummary['status'] | 'applied';
+
+function StatusBadge({ status }: { status: DisplayStatus }) {
   const config = {
-    promoted: { bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/20', icon: CheckCircle2 },
-    pending: { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/20', icon: Clock },
-    running: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', icon: Play },
-    failed: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20', icon: AlertCircle },
+    promoted: { bg: 'bg-emerald-500/10', text: 'text-emerald-400', border: 'border-emerald-500/20', icon: CheckCircle2, label: 'promoted' },
+    applied: { bg: 'bg-gray-700/40', text: 'text-gray-400', border: 'border-gray-600/30', icon: CheckCircle2, label: 'applied' },
+    pending: { bg: 'bg-amber-500/10', text: 'text-amber-400', border: 'border-amber-500/20', icon: Clock, label: 'pending' },
+    running: { bg: 'bg-blue-500/10', text: 'text-blue-400', border: 'border-blue-500/20', icon: Play, label: 'running' },
+    failed: { bg: 'bg-red-500/10', text: 'text-red-400', border: 'border-red-500/20', icon: AlertCircle, label: 'failed' },
   };
   const c = config[status];
   const Icon = c.icon;
@@ -46,9 +49,16 @@ function StatusBadge({ status }: { status: MigrationSummary['status'] }) {
   return (
     <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold uppercase tracking-wider ${c.bg} ${c.text} border ${c.border}`}>
       <Icon className="w-3 h-3" />
-      {status}
+      {c.label}
     </span>
   );
+}
+
+function resolveDisplayStatus(m: MigrationSummary, lastPromotedVersion: string | null): DisplayStatus {
+  if (m.status !== 'pending') return m.status;
+  if (m.started_at || m.promoted_at) return 'pending';
+  if (!lastPromotedVersion) return 'applied';
+  return m.version > lastPromotedVersion ? 'pending' : 'applied';
 }
 
 export default function MigrationsPanel({ envName, compact = false }: MigrationsPanelProps) {
@@ -133,6 +143,10 @@ export default function MigrationsPanel({ envName, compact = false }: Migrations
     );
   }
 
+  const lastPromotedVersion = migrations
+    .filter(x => x.status === 'promoted')
+    .reduce<string | null>((max, x) => (!max || x.version > max ? x.version : max), null);
+
   return (
     <div className="space-y-px">
       {error && (
@@ -143,6 +157,7 @@ export default function MigrationsPanel({ envName, compact = false }: Migrations
         const isExpanded = expandedVersion === m.version;
         const isFirst = idx === 0;
         const isLast = idx === migrations.length - 1 && !isExpanded;
+        const displayStatus = resolveDisplayStatus(m, lastPromotedVersion);
 
         return (
           <div key={m.version}>
@@ -180,7 +195,7 @@ export default function MigrationsPanel({ envName, compact = false }: Migrations
                     {m.statement_count} <span className="text-gray-600">stmts</span>
                   </span>
                 )}
-                <StatusBadge status={m.status} />
+                <StatusBadge status={displayStatus} />
                 {!compact && (
                   <span className="text-xs text-gray-500 tabular-nums w-12 text-right">{formatDuration(m.duration_ms)}</span>
                 )}
