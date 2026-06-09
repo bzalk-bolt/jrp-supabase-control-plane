@@ -735,7 +735,7 @@ async function handleResumeSetup(req: Request, user: AuthedUser): Promise<Respon
       }
       // state is "initial" or "installing" -- proceed with setup below
     }
-  } catch (_) {
+  } catch {
     // Non-fatal: if state check fails, we still attempt setup
   }
 
@@ -1329,8 +1329,15 @@ function execSshCommand(
 
 async function handleRepairSsl(req: Request, user: AuthedUser): Promise<Response> {
   try {
-    const body = (await req.json().catch(() => ({}))) as { local_environment_id?: string };
+    const body = (await req.json().catch(() => ({}))) as {
+      local_environment_id?: string;
+      letsencrypt_production?: boolean;
+    };
     const localEnvId = body.local_environment_id;
+    const useProductionCerts = body.letsencrypt_production === true;
+    const caServer = useProductionCerts
+      ? "https://acme-v02.api.letsencrypt.org/directory"
+      : "https://acme-staging-v02.api.letsencrypt.org/directory";
     if (!localEnvId) return jsonResponse({ error: "local_environment_id required" }, 400);
 
     const { data: envRow } = await user.client
@@ -1343,7 +1350,13 @@ async function handleRepairSsl(req: Request, user: AuthedUser): Promise<Response
 
     const ip = envRow.vps_ip as string;
     const password = envRow.vps_root_password as string;
-    const sshCommand = `ssh root@${ip} 'curl -fsSL ${REPAIR_SSL_SCRIPT_URL} | bash'`;
+    const baseDomain = String(envRow.apex_domain || "");
+    const repairCommand =
+      `BASE_DOMAIN=${shellQuote(baseDomain)} ` +
+      `LETSENCRYPT_PRODUCTION=${shellQuote(useProductionCerts ? "true" : "false")} ` +
+      `LETSENCRYPT_CA_SERVER=${shellQuote(caServer)} ` +
+      `bash -lc ${shellQuote(`curl -fsSL ${REPAIR_SSL_SCRIPT_URL} | bash -s -- "$BASE_DOMAIN"`)}`;
+    const sshCommand = `ssh root@${ip} ${shellQuote(repairCommand)}`;
 
     if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
     if (!password) {
@@ -1354,11 +1367,15 @@ async function handleRepairSsl(req: Request, user: AuthedUser): Promise<Response
     }
 
     await recordEvent(user.client, user.id, localEnvId, "repair-ssl", 10,
-      "Connecting to server via SSH to run SSL repair script", "running");
+      useProductionCerts
+        ? "Connecting to server via SSH to issue production TLS certificates"
+        : "Connecting to server via SSH to run staging SSL repair script",
+      "running",
+      { letsencrypt_production: useProductionCerts, ca_server: caServer },
+    );
 
-    const command = `curl -fsSL ${REPAIR_SSL_SCRIPT_URL} | bash`;
     let lastProgressUpdate = 0;
-    const result = await execSshCommand(ip, password, command, (stdout) => {
+    const result = await execSshCommand(ip, password, repairCommand, (stdout) => {
       const now = Date.now();
       if (now - lastProgressUpdate > 4000) {
         lastProgressUpdate = now;
@@ -1372,10 +1389,17 @@ async function handleRepairSsl(req: Request, user: AuthedUser): Promise<Response
 
     if (result.code === 0) {
       await recordEvent(user.client, user.id, localEnvId, "repair-ssl", 100,
-        "SSL repair script completed successfully", "succeeded", { stdout_tail: result.stdout.slice(-500) });
+        useProductionCerts
+          ? "Production TLS certificates were requested successfully"
+          : "SSL repair script completed successfully",
+        "succeeded",
+        { stdout_tail: result.stdout.slice(-500), letsencrypt_production: useProductionCerts },
+      );
       return jsonResponse({
         status: "completed",
-        message: "SSL repair script ran successfully. Certificates should now be valid.",
+        message: useProductionCerts
+          ? "Production certificate request completed. Run health checks again after Traefik reloads."
+          : "SSL repair script ran successfully. Certificates should now be active.",
         output: result.stdout.slice(-2000),
         ssh_command: sshCommand,
       }, 200);

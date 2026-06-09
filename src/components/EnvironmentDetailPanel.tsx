@@ -25,6 +25,24 @@ function statusStyle(s: string) {
   }
 }
 
+function isUnknownIssuerError(detail?: string): boolean {
+  if (!detail) return false;
+  return /UnknownIssuer|invalid peer certificate|certificate/i.test(detail);
+}
+
+function isTrustedCertificatePending(results?: Record<string, unknown> | null): boolean {
+  if (!results) return false;
+  const serviceKeys = ['supabase_api', 'studio', 'auth', 'sync_api'];
+  const errorKeys = ['supabase_api_error', 'studio_error', 'auth_error', 'sync_api_error'];
+  const hasCertOnlyFailure = serviceKeys.some((key, index) =>
+    results[key] !== true && isUnknownIssuerError(String(results[errorKeys[index]] || ''))
+  );
+  if (!hasCertOnlyFailure) return false;
+  return serviceKeys.every((key, index) =>
+    results[key] === true || isUnknownIssuerError(String(results[errorKeys[index]] || ''))
+  );
+}
+
 export default function EnvironmentDetailPanel({ id }: { id: string }) {
   const navigate = useNavigate();
   const [env, setEnv] = useState<LocalEnvironment | null | undefined>(undefined);
@@ -222,10 +240,12 @@ function SetupProgressSection({ env, onChange }: { env: LocalEnvironment; onChan
   const osInstalled = env.vps_status === 'ready';
   const postInstallDone = env.post_install_status === 'completed';
   const postInstallRunning = env.post_install_status === 'running';
-  const healthOk = env.health_check_results && (env.health_check_results as Record<string, unknown>).supabase_api === true;
+  const healthResults = env.health_check_results as Record<string, unknown> | null;
+  const trustedCertPending = isTrustedCertificatePending(healthResults);
+  const healthOk = !!healthResults && (healthResults.supabase_api === true || trustedCertPending);
   const dnsConfigured = !!env.dns_a_record_verified_at;
 
-  const allDone = vpsPurchased && osInstalled && postInstallDone && dnsConfigured && healthOk;
+  const allDone = vpsPurchased && osInstalled && postInstallDone && dnsConfigured && healthOk && !trustedCertPending;
   const [expanded, setExpanded] = useState(!allDone);
 
   const isTransitional = env.vps_status === 'installing' || env.vps_status === 'provisioning' || env.vps_status === 'configuring_dns';
@@ -241,7 +261,9 @@ function SetupProgressSection({ env, onChange }: { env: LocalEnvironment; onChan
       try {
         await vpsProvisionService.pollProvision(env.id);
         await onChange();
-      } catch {}
+      } catch {
+        // Polling is best-effort; the next interval will try again.
+      }
       if (!stoppedRef.current) {
         timer = setTimeout(tick, 6000);
       }
@@ -265,7 +287,7 @@ function SetupProgressSection({ env, onChange }: { env: LocalEnvironment; onChan
     { label: 'OS Installed & Running', status: stepStatus(osInstalled, env.vps_status === 'installing' || env.vps_status === 'provisioning'), detail: env.vps_status === 'ready' ? 'Running' : env.vps_status },
     { label: 'Post-Install Script', status: postInstallDone ? 'completed' : postInstallRunning ? 'active' : (env.post_install_status === 'failed' ? 'failed' : 'pending') },
     { label: 'Domain DNS Configured', status: dnsConfigured ? 'completed' : 'pending' },
-    { label: 'Health Checks', status: healthOk ? 'completed' : 'pending' },
+    { label: 'Health Checks', status: healthOk ? 'completed' : 'pending', detail: trustedCertPending ? 'Trusted cert pending' : undefined },
   ];
 
   const completedCount = steps.filter(s => s.status === 'completed').length;
@@ -285,6 +307,11 @@ function SetupProgressSection({ env, onChange }: { env: LocalEnvironment; onChan
           <span className="inline-flex items-center gap-1 text-xs text-emerald-400 font-medium mr-2">
             <CheckCircle2 className="w-3.5 h-3.5" />
             Complete
+          </span>
+        ) : trustedCertPending ? (
+          <span className="inline-flex items-center gap-1 text-xs text-amber-400 font-medium mr-2">
+            <ShieldCheck className="w-3.5 h-3.5" />
+            Cert pending
           </span>
         ) : (
           <span className="text-xs text-gray-500 font-medium mr-2">
@@ -479,6 +506,7 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
   const [repairingSsl, setRepairingSsl] = useState(false);
   const [sslRepairResult, setSslRepairResult] = useState<{ status?: string; message?: string; ssh_command?: string; output?: string } | null>(null);
   const [repairProgressMsg, setRepairProgressMsg] = useState<string | null>(null);
+  const [lastRepairUsesProduction, setLastRepairUsesProduction] = useState(false);
   const [resettingVps, setResettingVps] = useState(false);
   const [resetVpsResult, setResetVpsResult] = useState<{ status?: string; message?: string; ssh_command?: string; output?: string } | null>(null);
   const [resetProgressMsg, setResetProgressMsg] = useState<string | null>(null);
@@ -486,17 +514,19 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const resetPollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  const trustedCertPending = isTrustedCertificatePending(results as unknown as Record<string, unknown> | null);
   const checks = results ? [
     { label: 'TCP Port 443', ok: results.tcp_443 },
     { label: 'Supabase API', ok: results.supabase_api, detail: results.supabase_api_error || (results.supabase_api_status ? `Status ${results.supabase_api_status}` : undefined) },
     { label: 'Studio', ok: results.studio, detail: results.studio_error || (results.studio_status ? `Status ${results.studio_status}` : undefined) },
     { label: 'Auth', ok: results.auth, detail: results.auth_error || (results.auth_status ? `Status ${results.auth_status}` : undefined) },
     { label: 'Sync API', ok: results.sync_api, detail: results.sync_api_error || (results.sync_api_status ? `Status ${results.sync_api_status}` : undefined) },
-  ] : [];
+  ].map(c => ({ ...c, certOnly: isUnknownIssuerError(c.detail) })) : [];
 
-  const hasFailures = checks.some(c => !c.ok);
-  const hasDnsErrors = checks.some(c => !c.ok && c.detail?.includes('dns error'));
-  const hasConnectionRefused = checks.some(c => !c.ok && c.detail?.includes('Connection refused'));
+  const hasFailures = checks.some(c => !c.ok && !(trustedCertPending && c.certOnly));
+  const hasRawFailures = checks.some(c => !c.ok);
+  const hasDnsErrors = checks.some(c => !c.ok && !c.certOnly && c.detail?.includes('dns error'));
+  const hasConnectionRefused = checks.some(c => !c.ok && !c.certOnly && c.detail?.includes('Connection refused'));
   const tcpOk = results?.tcp_443;
   // SSL issue: TCP works but HTTPS service endpoints fail (typically means certs were generated before DNS pointed correctly)
   const hasSslIssue = tcpOk && !hasDnsErrors && !hasConnectionRefused && hasFailures && !results?.supabase_api;
@@ -539,14 +569,15 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
 
   useEffect(() => { return () => { stopPolling(); stopResetPolling(); }; }, []);
 
-  async function repairSsl() {
+  async function repairSsl(useProductionCerts = false) {
+    setLastRepairUsesProduction(useProductionCerts);
     setRepairingSsl(true);
     setError('');
     setSslRepairResult(null);
-    setRepairProgressMsg('Connecting to server via SSH...');
+    setRepairProgressMsg(useProductionCerts ? 'Requesting production certificates...' : 'Connecting to server via SSH...');
     startPolling();
     try {
-      const res = await vpsProvisionService.repairSsl(env.id);
+      const res = await vpsProvisionService.repairSsl(env.id, { letsencrypt_production: useProductionCerts });
       setSslRepairResult({ status: res.status, message: res.message, ssh_command: res.ssh_command, output: res.output });
     } catch (e: unknown) {
       const err = e as Error & { ssh_command?: string; output?: string };
@@ -645,17 +676,29 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
 
       {results ? (
         <div className="space-y-2">
-          {checks.map(c => (
-            <div key={c.label} className="flex items-center gap-3 text-sm">
-              {c.ok ? (
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
-              ) : (
-                <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
-              )}
-              <span className={c.ok ? 'text-gray-200' : 'text-red-300'}>{c.label}</span>
-              {c.detail && <span className={`text-xs font-mono max-w-md truncate ${c.ok ? 'text-gray-500' : 'text-red-400/70'}`}>{c.detail}</span>}
-            </div>
-          ))}
+          {checks.map(c => {
+            const certOnlyOk = trustedCertPending && c.certOnly;
+            const displayOk = c.ok || certOnlyOk;
+            const detail = certOnlyOk ? 'Reached with staging certificate' : c.detail;
+            return (
+              <div key={c.label} className="flex items-center gap-3 text-sm">
+                {displayOk ? (
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" />
+                ) : (
+                  <AlertTriangle className="w-4 h-4 text-red-400 flex-shrink-0" />
+                )}
+                <span className={displayOk ? 'text-gray-200' : 'text-red-300'}>{c.label}</span>
+                {detail && (
+                  <span className={cn(
+                    'text-xs font-mono max-w-md truncate',
+                    certOnlyOk ? 'text-amber-400/80' : displayOk ? 'text-gray-500' : 'text-red-400/70'
+                  )}>
+                    {detail}
+                  </span>
+                )}
+              </div>
+            );
+          })}
           {env.last_health_check_at && (
             <p className="text-xs text-gray-600 pt-1">Last checked: {new Date(env.last_health_check_at).toLocaleString()}</p>
           )}
@@ -704,11 +747,11 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
           )}
           {sslRepairResult?.status === 'failed' && !repairingSsl && (
             <button
-              onClick={() => { setSslRepairResult(null); repairSsl(); }}
+              onClick={() => { setSslRepairResult(null); repairSsl(lastRepairUsesProduction); }}
               className="mt-2 flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium rounded transition-colors"
             >
               <RotateCcw className="w-3 h-3" />
-              Retry SSL Repair
+              {lastRepairUsesProduction ? 'Retry Production Certs' : 'Retry SSL Repair'}
             </button>
           )}
         </div>
@@ -768,14 +811,29 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
       )}
 
       {/* Diagnostic guidance when failures present */}
-      {hasFailures && results && (
+      {(hasRawFailures || trustedCertPending) && results && (
         <div className="space-y-3 pt-2 border-t border-gray-800">
-          {hasSslIssue && !repairingSsl && (
+          {trustedCertPending && !repairingSsl && (
+            <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2.5 text-xs space-y-2">
+              <p className="text-amber-300 font-medium">Trusted HTTPS Pending</p>
+              <p className="text-gray-400">
+                The server is up and the routed services are responding with staging certificates. Issue production certificates when DNS is correct and this environment is ready for browser and proxy access.
+              </p>
+              <button
+                onClick={() => { setSslRepairResult(null); repairSsl(true); }}
+                className="flex items-center gap-1.5 px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs font-medium rounded transition-colors"
+              >
+                <ShieldCheck className="w-3 h-3" />
+                Issue Production Certificates
+              </button>
+            </div>
+          )}
+          {hasSslIssue && !trustedCertPending && !repairingSsl && (
             <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2.5 text-xs space-y-2">
               <p className="text-amber-300 font-medium">SSL Certificate Issue</p>
               <p className="text-gray-400">The server is reachable but HTTPS connections are failing. This usually means SSL certificates were generated before DNS was properly configured. A server restart will trigger Traefik to re-request valid certificates.</p>
               <button
-                onClick={() => { setSslRepairResult(null); repairSsl(); }}
+                onClick={() => { setSslRepairResult(null); repairSsl(false); }}
                 className="flex items-center gap-1.5 px-3 py-1.5 bg-amber-600 hover:bg-amber-500 text-white text-xs font-medium rounded transition-colors"
               >
                 <Wrench className="w-3 h-3" />
@@ -795,7 +853,7 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
               <p className="text-gray-400">DNS resolves but services are refusing connections. The post-install script may not have completed successfully, or services haven't started yet. Try re-running the post-install script.</p>
             </div>
           )}
-          {!hasDnsErrors && !hasSslIssue && !hasConnectionRefused && tcpOk && (
+          {!trustedCertPending && !hasDnsErrors && !hasSslIssue && !hasConnectionRefused && tcpOk && (
             <div className="bg-amber-500/5 border border-amber-500/20 rounded-lg px-3 py-2.5 text-xs space-y-1">
               <p className="text-amber-300 font-medium">Services partially responding</p>
               <p className="text-gray-400">The server is reachable on port 443 but some services are not responding correctly. This may indicate the services are still starting up or need to be reconfigured.</p>
@@ -816,14 +874,14 @@ function HealthCheckPanel({ env, onChange }: { env: LocalEnvironment; onChange: 
                 <p className="text-xs text-gray-400 font-medium">Available actions:</p>
 
                 <button
-                  onClick={repairSsl}
+                  onClick={() => repairSsl(false)}
                   disabled={repairingSsl}
                   className="w-full flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-750 border border-gray-700 rounded-lg text-left transition-colors group"
                 >
                   <ShieldCheck className="w-4 h-4 text-gray-500 group-hover:text-gray-400 flex-shrink-0" />
                   <div className="flex-1 min-w-0">
-                    <p className="text-xs text-gray-300 font-medium">Repair SSL Certificates</p>
-                    <p className="text-xs text-gray-500">Restart server to trigger Traefik certificate renewal</p>
+                    <p className="text-xs text-gray-300 font-medium">Repair Staging Certificates</p>
+                    <p className="text-xs text-gray-500">Re-run Traefik certificate setup without using production limits</p>
                   </div>
                   {repairingSsl && <Loader2 className="w-3.5 h-3.5 text-gray-500 animate-spin" />}
                 </button>
