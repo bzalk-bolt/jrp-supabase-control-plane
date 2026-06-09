@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useState, useCallback } from 'react';
 import { syncApi, localEnvironmentsService } from '../services';
-import type { Environment, EnvironmentProject } from '../types/api';
+import type { Environment, EnvironmentProject, LocalEnvironmentBinding } from '../types/api';
 import AppLoadingSkeleton from '../components/AppLoadingSkeleton';
 
 export type EnvironmentSource = 'cloud' | 'self-hosted';
@@ -39,24 +39,16 @@ export function EnvironmentsProvider({ children }: { children: React.ReactNode }
     try {
       setError('');
 
-      // Fetch cloud environments from the default sync-api. This must not inherit
-      // the active local target, because a broken self-hosted SSL state should not
-      // block the Local Environments page.
-      let envs: Environment[] = [];
+      // Fetch cloud environments from default sync-api
+      const envs = await syncApi.listEnvironments();
       const cloudMeta: MetaMap = {};
-      let cloudError = '';
-      try {
-        envs = await syncApi.listDefaultEnvironments();
-        for (const e of envs) {
-          cloudMeta[e.name] = { source: 'cloud' };
-        }
-      } catch (e) {
-        cloudError = e instanceof Error ? e.message : 'Failed to load cloud environments';
+      for (const e of envs) {
+        cloudMeta[e.name] = { source: 'cloud' };
       }
 
       // Fetch identities for cloud environments
       const identityResults = await Promise.allSettled(
-        envs.map(env => syncApi.getDefaultEnvironmentIdentity(env.name).then(id => {
+        envs.map(env => syncApi.getEnvironmentIdentity(env.name).then(id => {
           const src = id.projects.find((p: EnvironmentProject) => p.role === 'source');
           const tgt = id.projects.find((p: EnvironmentProject) => p.role === 'target');
           return { name: env.name, source: src?.name, target: tgt?.name };
@@ -73,46 +65,62 @@ export function EnvironmentsProvider({ children }: { children: React.ReactNode }
       // Fetch local environment bindings and their environments
       let localEnvs: Environment[] = [];
       const localMeta: MetaMap = {};
-      let localError = '';
       try {
         const bindings = await localEnvironmentsService.listBindings();
         const localEnvsList = await localEnvironmentsService.listLocalEnvironments();
 
-        for (const binding of bindings) {
-          const localEnv = localEnvsList.find(le => le.id === binding.local_environment_id);
-          if (!localEnv) continue;
+        const bindingResults = await Promise.allSettled(
+          bindings.map(async (binding: LocalEnvironmentBinding) => {
+            const localEnv = localEnvsList.find(le => le.id === binding.local_environment_id);
+            if (!localEnv || !localEnv.sync_api_url) return [];
 
-          // Do not probe the self-hosted sync-api during global app load. If its
-          // certificate is still staging/invalid, the proxy will reject it and can
-          // prevent users from reaching the reset/repair controls.
-          const envName = `${localEnv.name || localEnv.apex_domain}-main`;
-          localMeta[envName] = {
-            source: 'self-hosted',
-            localEnvironmentId: binding.local_environment_id,
-            domain: localEnv.apex_domain,
-          };
-          localEnvs = localEnvs.concat([{
-            name: envName,
-            source_env: 'production',
-            target_env: 'local',
-            source_db_url: '',
-            target_db_url: '',
-            source_container: '',
-            target_container: 'supabase-db',
-            sync_storage_buckets: true,
-          }]);
+            const envName = `${localEnv.name || localEnv.apex_domain}-main`;
+
+            try {
+              const remoteEnvs = await syncApi.listEnvironmentsFor(binding.local_environment_id);
+              for (const e of remoteEnvs) {
+                localMeta[e.name] = {
+                  source: 'self-hosted',
+                  localEnvironmentId: binding.local_environment_id,
+                  domain: localEnv.apex_domain,
+                };
+              }
+              if (remoteEnvs.length > 0) return remoteEnvs;
+            } catch {
+              // fetch failed - fall through to synthetic entry
+            }
+
+            // No environments returned: create a synthetic entry so the selector shows it
+            localMeta[envName] = {
+              source: 'self-hosted',
+              localEnvironmentId: binding.local_environment_id,
+              domain: localEnv.apex_domain,
+            };
+            return [{
+              name: envName,
+              source_env: 'production',
+              target_env: 'local',
+              source_db_url: '',
+              target_db_url: '',
+              source_container: '',
+              target_container: 'supabase-db',
+              sync_storage_buckets: true,
+            }] as Environment[];
+          })
+        );
+
+        for (const result of bindingResults) {
+          if (result.status === 'fulfilled') {
+            localEnvs = localEnvs.concat(result.value);
+          }
         }
-      } catch (e) {
-        localError = e instanceof Error ? e.message : 'Failed to load local environment bindings';
+      } catch {
         // Bindings fetch failed - continue with cloud-only
       }
 
       setEnvironments([...envs, ...localEnvs]);
       setIdentities(map);
       setMeta({ ...cloudMeta, ...localMeta });
-      if (!envs.length && !localEnvs.length && (cloudError || localError)) {
-        setError(cloudError || localError);
-      }
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load environments');
     } finally {

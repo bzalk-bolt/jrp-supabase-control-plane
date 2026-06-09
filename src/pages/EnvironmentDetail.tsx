@@ -6,18 +6,15 @@ import type { Environment, EnvironmentIdentity } from '../types/api';
 import ResetConfirmModal from '../components/ResetConfirmModal';
 import AppLoadingSkeleton from '../components/AppLoadingSkeleton';
 import MigrationsPanel from '../components/MigrationsPanel';
-import { useEnvironments } from '../contexts/EnvironmentsContext';
 
 export default function EnvironmentDetail() {
   const { name } = useParams<{ name: string }>();
   const navigate = useNavigate();
-  const { environments, meta } = useEnvironments();
 
   const [environment, setEnvironment] = useState<Environment | null>(null);
   const [identity, setIdentity] = useState<EnvironmentIdentity | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
-  const [usingFallback, setUsingFallback] = useState(false);
   const [activeJobId, setActiveJobId] = useState<string | null>(null);
   const [activeJobLabel, setActiveJobLabel] = useState('');
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
@@ -26,54 +23,22 @@ export default function EnvironmentDetail() {
 
   const sourceProject = identity?.projects.find(p => p.role === 'source');
   const targetProject = identity?.projects.find(p => p.role === 'target');
-  const envMeta = name ? meta[name] : undefined;
-  const localEnvironmentId = envMeta?.source === 'self-hosted' ? envMeta.localEnvironmentId : undefined;
-  const fallbackEnvironment = name ? environments.find(e => e.name === name) : undefined;
 
   useEffect(() => {
     if (!name) return;
     setLoading(true);
-    setError('');
-    setUsingFallback(false);
-
-    const environmentRequest = localEnvironmentId
-      ? syncApi.getEnvironmentFor(name, localEnvironmentId)
-      : syncApi.getEnvironment(name);
-    const identityRequest = localEnvironmentId
-      ? syncApi.getEnvironmentIdentityFor(name, localEnvironmentId)
-      : syncApi.getEnvironmentIdentity(name);
-
     Promise.all([
-      environmentRequest.then(env => { setEnvironment(env); return env; }),
-      identityRequest.then(id => { setIdentity(id); return id; }).catch(() => null),
+      syncApi.getEnvironment(name).then(env => { setEnvironment(env); return env; }),
+      syncApi.getEnvironmentIdentity(name).then(id => { setIdentity(id); return id; }).catch(() => null),
     ])
-      .catch(e => {
-        if (fallbackEnvironment) {
-          setEnvironment(fallbackEnvironment);
-          setIdentity(null);
-          setUsingFallback(true);
-          setError(
-            localEnvironmentId
-              ? 'The self-hosted sync-api is not reachable or has not created this environment yet. Use the local environment page to repair SSL, reset the VPS, or pull the remote project into this server.'
-              : e instanceof Error ? e.message : 'Failed to load',
-          );
-          return;
-        }
-        setEnvironment(null);
-        setIdentity(null);
-        setError(e instanceof Error ? e.message : 'Failed to load');
-      })
+      .catch(e => setError(e instanceof Error ? e.message : 'Failed to load'))
       .finally(() => setLoading(false));
-  }, [name, localEnvironmentId, fallbackEnvironment]);
+  }, [name]);
 
   async function handleDelete() {
     if (!name) return;
     try {
-      if (localEnvironmentId) {
-        await syncApi.deleteEnvironmentFor(name, localEnvironmentId);
-      } else {
-        await syncApi.deleteEnvironment(name);
-      }
+      await syncApi.deleteEnvironment(name);
       navigate('/environments');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Delete failed');
@@ -87,8 +52,8 @@ export default function EnvironmentDetail() {
       setResetLoading(true);
       setError('');
       const job = resetDirection === 'destination'
-        ? await syncApi.resetDestination(name, { confirm: confirmValue }, localEnvironmentId)
-        : await syncApi.resetSource(name, { confirm: confirmValue }, localEnvironmentId);
+        ? await syncApi.resetDestination(name, { confirm: confirmValue })
+        : await syncApi.resetSource(name, { confirm: confirmValue });
       setResetDirection(null);
       setActiveJobId(job.id);
       setActiveJobLabel(`Reset ${resetDirection}`);
@@ -154,27 +119,6 @@ export default function EnvironmentDetail() {
         <div className="bg-red-500/10 border border-red-500/20 rounded-lg px-4 py-3 text-sm text-red-400">{error}</div>
       )}
 
-      {usingFallback && localEnvironmentId && (
-        <div className="bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-3 flex items-center justify-between gap-4">
-          <div className="flex items-start gap-3">
-            <AlertTriangle className="w-4 h-4 text-amber-400 mt-0.5 flex-shrink-0" />
-            <div>
-              <p className="text-sm font-medium text-amber-300">Self-hosted sync-api unavailable</p>
-              <p className="text-xs text-amber-100/70 mt-1">
-                Environment details are being shown from the saved binding record. Server reset and SSL repair live on the local environment page.
-              </p>
-            </div>
-          </div>
-          <Link
-            to={`/local-environments/${localEnvironmentId}`}
-            className="inline-flex items-center gap-2 px-3 py-2 text-xs font-medium text-amber-100 hover:text-white bg-amber-500/10 hover:bg-amber-500/20 border border-amber-500/30 rounded-lg transition-colors whitespace-nowrap"
-          >
-            Open local environment
-            <ExternalLink className="w-3 h-3" />
-          </Link>
-        </div>
-      )}
-
       {activeJobId && (
         <div className="bg-emerald-500/10 border border-emerald-500/20 rounded-lg px-4 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
@@ -221,84 +165,80 @@ export default function EnvironmentDetail() {
         </div>
       </div>
 
-      {!usingFallback && (
-        <>
-          {/* Migrations */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-gray-800 flex items-center gap-2">
-              <ScrollText className="w-4 h-4 text-gray-400" />
-              <h2 className="text-sm font-semibold text-gray-200">Migrations</h2>
+      {/* Migrations */}
+      <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-gray-800 flex items-center gap-2">
+          <ScrollText className="w-4 h-4 text-gray-400" />
+          <h2 className="text-sm font-semibold text-gray-200">Migrations</h2>
+        </div>
+        <div className="p-4">
+          <MigrationsPanel envName={name!} />
+        </div>
+      </div>
+
+      {/* Danger Zone */}
+      <div className="bg-gray-900 border border-red-500/30 rounded-xl overflow-hidden">
+        <div className="px-5 py-4 border-b border-red-500/20 bg-red-500/5">
+          <div className="flex items-center gap-2">
+            <AlertTriangle className="w-4 h-4 text-red-400" />
+            <h2 className="text-sm font-semibold text-red-300">Danger Zone</h2>
+          </div>
+        </div>
+        <div className="divide-y divide-gray-800">
+          {/* Reset Destination */}
+          <div className="flex items-center justify-between px-5 py-4">
+            <div className="flex-1 mr-4">
+              <p className="text-sm font-medium text-gray-200">Reset destination from source</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Overwrite all data in <span className="font-mono text-gray-300">{targetName}</span> with data from <span className="font-mono text-gray-300">{sourceName}</span>.
+                This is non-recoverable.
+              </p>
             </div>
-            <div className="p-4">
-              <MigrationsPanel envName={name!} localEnvironmentId={localEnvironmentId} />
-            </div>
+            <button
+              onClick={() => setResetDirection('destination')}
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-400 hover:text-red-300 bg-transparent hover:bg-red-500/10 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-all whitespace-nowrap"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset Destination
+            </button>
           </div>
 
-          {/* Danger Zone */}
-          <div className="bg-gray-900 border border-red-500/30 rounded-xl overflow-hidden">
-            <div className="px-5 py-4 border-b border-red-500/20 bg-red-500/5">
-              <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-red-400" />
-                <h2 className="text-sm font-semibold text-red-300">Danger Zone</h2>
-              </div>
+          {/* Reset Source */}
+          <div className="flex items-center justify-between px-5 py-4">
+            <div className="flex-1 mr-4">
+              <p className="text-sm font-medium text-gray-200">Reset source from destination</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Overwrite all data in <span className="font-mono text-gray-300">{sourceName}</span> with data from <span className="font-mono text-gray-300">{targetName}</span>.
+                This is non-recoverable.
+              </p>
             </div>
-            <div className="divide-y divide-gray-800">
-              {/* Reset Destination */}
-              <div className="flex items-center justify-between px-5 py-4">
-                <div className="flex-1 mr-4">
-                  <p className="text-sm font-medium text-gray-200">Reset destination from source</p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    Overwrite all data in <span className="font-mono text-gray-300">{targetName}</span> with data from <span className="font-mono text-gray-300">{sourceName}</span>.
-                    This is non-recoverable.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setResetDirection('destination')}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-400 hover:text-red-300 bg-transparent hover:bg-red-500/10 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-all whitespace-nowrap"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  Reset Destination
-                </button>
-              </div>
-
-              {/* Reset Source */}
-              <div className="flex items-center justify-between px-5 py-4">
-                <div className="flex-1 mr-4">
-                  <p className="text-sm font-medium text-gray-200">Reset source from destination</p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    Overwrite all data in <span className="font-mono text-gray-300">{sourceName}</span> with data from <span className="font-mono text-gray-300">{targetName}</span>.
-                    This is non-recoverable.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setResetDirection('source')}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-400 hover:text-red-300 bg-transparent hover:bg-red-500/10 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-all whitespace-nowrap"
-                >
-                  <RotateCcw className="w-3.5 h-3.5" />
-                  Reset Source
-                </button>
-              </div>
-
-              {/* Delete Environment */}
-              <div className="flex items-center justify-between px-5 py-4">
-                <div className="flex-1 mr-4">
-                  <p className="text-sm font-medium text-gray-200">Delete this environment</p>
-                  <p className="text-xs text-gray-400 mt-0.5">
-                    Remove the environment configuration. This does not affect the underlying databases.
-                  </p>
-                </div>
-                <button
-                  onClick={() => setShowDeleteConfirm(true)}
-                  className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-400 hover:text-red-300 bg-transparent hover:bg-red-500/10 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-all whitespace-nowrap"
-                >
-                  <Trash2 className="w-3.5 h-3.5" />
-                  Delete Environment
-                </button>
-              </div>
-            </div>
+            <button
+              onClick={() => setResetDirection('source')}
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-400 hover:text-red-300 bg-transparent hover:bg-red-500/10 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-all whitespace-nowrap"
+            >
+              <RotateCcw className="w-3.5 h-3.5" />
+              Reset Source
+            </button>
           </div>
-        </>
-      )}
+
+          {/* Delete Environment */}
+          <div className="flex items-center justify-between px-5 py-4">
+            <div className="flex-1 mr-4">
+              <p className="text-sm font-medium text-gray-200">Delete this environment</p>
+              <p className="text-xs text-gray-400 mt-0.5">
+                Remove the environment configuration. This does not affect the underlying databases.
+              </p>
+            </div>
+            <button
+              onClick={() => setShowDeleteConfirm(true)}
+              className="inline-flex items-center gap-2 px-3 py-2 text-sm font-medium text-red-400 hover:text-red-300 bg-transparent hover:bg-red-500/10 border border-red-500/30 hover:border-red-500/50 rounded-lg transition-all whitespace-nowrap"
+            >
+              <Trash2 className="w-3.5 h-3.5" />
+              Delete Environment
+            </button>
+          </div>
+        </div>
+      </div>
 
       {/* Reset Confirmation Modal */}
       {resetDirection && (

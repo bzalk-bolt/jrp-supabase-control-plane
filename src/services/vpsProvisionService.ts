@@ -316,15 +316,6 @@ export interface ResetVpsResponse {
   error?: string;
 }
 
-export interface ServerDiagnosticsResponse {
-  status: string;
-  message: string;
-  checked_at?: string;
-  ssh_command: string;
-  output?: string;
-  error?: string;
-}
-
 export async function resetVps(localEnvId: string): Promise<ResetVpsResponse> {
   const res = await authedFetch('reset-vps', {
     method: 'POST',
@@ -341,42 +332,6 @@ export async function resetVps(localEnvId: string): Promise<ResetVpsResponse> {
     throw Object.assign(new Error(resp.message), { ssh_command: resp.ssh_command, output: resp.output });
   }
   return body as ResetVpsResponse;
-}
-
-export async function pollResetVps(localEnvId: string): Promise<ResetVpsResponse> {
-  const res = await authedFetch('poll-reset-vps', {
-    method: 'POST',
-    body: JSON.stringify({ local_environment_id: localEnvId }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const resp: ResetVpsResponse = {
-      status: 'failed',
-      message: body?.error || `VPS reset poll failed (${res.status})`,
-      ssh_command: body?.ssh_command || '',
-      output: body?.output,
-    };
-    throw Object.assign(new Error(resp.message), { ssh_command: resp.ssh_command, output: resp.output });
-  }
-  return body as ResetVpsResponse;
-}
-
-export async function getServerDiagnostics(localEnvId: string): Promise<ServerDiagnosticsResponse> {
-  const res = await authedFetch('server-diagnostics', {
-    method: 'POST',
-    body: JSON.stringify({ local_environment_id: localEnvId }),
-  });
-  const body = await res.json().catch(() => ({}));
-  if (!res.ok) {
-    const resp: ServerDiagnosticsResponse = {
-      status: 'failed',
-      message: body?.error || `Server diagnostics failed (${res.status})`,
-      ssh_command: body?.ssh_command || '',
-      output: body?.output,
-    };
-    throw Object.assign(new Error(resp.message), { ssh_command: resp.ssh_command, output: resp.output });
-  }
-  return body as ServerDiagnosticsResponse;
 }
 
 export interface RepairSyncTokenResponse {
