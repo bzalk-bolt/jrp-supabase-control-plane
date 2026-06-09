@@ -227,6 +227,14 @@ export default function EnvironmentDetail() {
                 mono
               />
             )}
+            {envMeta?.domain && (
+              <ConfigRow
+                label="Studio URL"
+                value={`https://auth.${envMeta.domain}`}
+                mono
+                href={`https://auth.${envMeta.domain}`}
+              />
+            )}
             {environment.target_db_url && (
               <ConfigRow label="DB Connection" value={environment.target_db_url} mono />
             )}
