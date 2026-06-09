@@ -27,7 +27,7 @@ export default function Compare() {
   const navigate = useNavigate();
   const [searchParams, setSearchParams] = useSearchParams();
 
-  const { environments, meta } = useEnvironments();
+  const { environments, meta, setActiveLocalEnvId } = useEnvironments();
   const [selectedEnv, setSelectedEnv] = useState<string | null>(name || localStorage.getItem(LAST_ENV_KEY));
 
   const [stats, setStats] = useState<DatabaseStatsResponse | null>(null);
@@ -80,11 +80,20 @@ export default function Compare() {
 
   useEffect(() => {
     if (selectedEnv) {
+      syncLocalEnvId(selectedEnv);
       loadStats();
     }
   }, [selectedEnv]);
 
+  function syncLocalEnvId(envName: string) {
+    const envMeta = meta[envName];
+    const id = envMeta?.source === 'self-hosted' && envMeta.localEnvironmentId ? envMeta.localEnvironmentId : '';
+    setActiveLocalEnvId(id);
+    syncApi.setActiveLocalEnvironmentId(id);
+  }
+
   function handleSelectEnv(envName: string) {
+    syncLocalEnvId(envName);
     setSelectedEnv(envName);
     localStorage.setItem(LAST_ENV_KEY, envName);
     navigate(`/compare/${envName}`, { replace: true });
@@ -153,6 +162,7 @@ export default function Compare() {
 
   useEffect(() => {
     if (!selectedEnv) return;
+    syncLocalEnvId(selectedEnv);
 
     syncApi.getEdgeFunctions(selectedEnv).then(d => {
       const sourceFns = d.edge_functions.find(s => s.role === 'source')?.functions || [];
