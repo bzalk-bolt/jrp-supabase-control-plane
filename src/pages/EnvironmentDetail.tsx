@@ -94,6 +94,7 @@ export default function EnvironmentDetail() {
 
   if (!environment) return null;
 
+  const envMeta = name ? meta[name] : undefined;
   const sourceName = sourceProject?.name || environment.source_env || 'source';
   const targetName = targetProject?.name || environment.target_env || 'target';
 
@@ -184,7 +185,7 @@ export default function EnvironmentDetail() {
                 )}
               </>
             )}
-            {environment.source_container && (
+            {environment.source_container && !sourceProject?.project_ref && (
               <ConfigRow label="Container" value={environment.source_container} mono />
             )}
             {environment.source_db_url && (
@@ -220,7 +221,11 @@ export default function EnvironmentDetail() {
               </>
             )}
             {environment.target_container && (
-              <ConfigRow label="Container" value={environment.target_container} mono />
+              <ConfigRow
+                label="Database Host"
+                value={envMeta?.domain ? `db.${envMeta.domain}` : environment.target_container}
+                mono
+              />
             )}
             {environment.target_db_url && (
               <ConfigRow label="DB Connection" value={environment.target_db_url} mono />
