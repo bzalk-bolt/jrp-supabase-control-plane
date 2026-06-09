@@ -1289,6 +1289,7 @@ async function handleConfigureDns(req: Request, user: AuthedUser): Promise<Respo
 // --- Repair SSL: SSH into server and run repair script ---
 
 const REPAIR_SSL_SCRIPT_URL = "https://raw.githubusercontent.com/bzalk/jrp-supabase/main/scripts/repair-traefik-ssl.sh";
+const REPAIR_SYNC_API_POSTGRES_CLIENT_SCRIPT_URL = "https://raw.githubusercontent.com/bzalk/jrp-supabase/main/scripts/repair-sync-api-postgres-client.sh";
 
 function execSshCommand(
   host: string,
@@ -1386,6 +1387,84 @@ async function handleRepairSsl(req: Request, user: AuthedUser): Promise<Response
         status: "failed",
         message: `Repair script exited with code ${result.code}. Check the output below or run manually via SSH.`,
         output: (result.stdout + "\n" + result.stderr).slice(-2000),
+        ssh_command: sshCommand,
+      }, 200);
+    }
+  } catch (err) {
+    const message = err instanceof Error ? err.message : "Unknown error";
+    return jsonResponse({ error: message, ssh_command: "" }, 500);
+  }
+}
+
+// --- Repair Sync API Postgres client: rebuild sync-api with selected pg_dump major ---
+
+async function handleRepairSyncApiPostgresClient(req: Request, user: AuthedUser): Promise<Response> {
+  try {
+    const body = (await req.json().catch(() => ({}))) as {
+      local_environment_id?: string;
+      postgres_client_major?: string | number;
+    };
+    const localEnvId = body.local_environment_id;
+    if (!localEnvId) return jsonResponse({ error: "local_environment_id required" }, 400);
+
+    const major = String(body.postgres_client_major || "17").trim();
+    if (!/^[0-9]{2}$/.test(major)) {
+      return jsonResponse({ error: "postgres_client_major must be a two-digit major version, for example 17" }, 400);
+    }
+
+    const { data: envRow } = await user.client
+      .from("local_environments")
+      .select("*")
+      .eq("id", localEnvId)
+      .eq("user_id", user.id)
+      .maybeSingle();
+    if (!envRow) return jsonResponse({ error: "Environment not found" }, 404);
+
+    const ip = envRow.vps_ip as string;
+    const password = envRow.vps_root_password as string;
+    const sshCommand = `ssh root@${ip} 'curl -fsSL ${REPAIR_SYNC_API_POSTGRES_CLIENT_SCRIPT_URL} | UPDATE_REPO=true bash -s -- ${major}'`;
+
+    if (!ip) return jsonResponse({ error: "No VPS IP address found" }, 400);
+    if (!password) {
+      return jsonResponse({
+        error: "No root password stored for this environment. Run the repair script manually via SSH.",
+        ssh_command: sshCommand,
+      }, 400);
+    }
+
+    await recordEvent(user.client, user.id, localEnvId, "repair-sync-api-client", 10,
+      `Connecting to server to install PostgreSQL client ${major} for sync-api`, "running");
+
+    const command = `curl -fsSL ${REPAIR_SYNC_API_POSTGRES_CLIENT_SCRIPT_URL} | UPDATE_REPO=true bash -s -- ${shellQuote(major)}`;
+    let lastProgressUpdate = 0;
+    const result = await execSshCommand(ip, password, command, (stdout) => {
+      const now = Date.now();
+      if (now - lastProgressUpdate > 5000) {
+        lastProgressUpdate = now;
+        const lastLine = stdout.trim().split("\n").pop() || "";
+        EdgeRuntime.waitUntil(
+          recordEvent(user.client, user.id, localEnvId, "repair-sync-api-client", 50,
+            `Executing: ${lastLine.slice(0, 140)}`, "running", { stdout_tail: stdout.slice(-400), postgres_client_major: major })
+        );
+      }
+    }, 15 * 60 * 1000);
+
+    if (result.code === 0) {
+      await recordEvent(user.client, user.id, localEnvId, "repair-sync-api-client", 100,
+        `sync-api PostgreSQL client ${major} repair completed`, "succeeded", { stdout_tail: result.stdout.slice(-500), postgres_client_major: major });
+      return jsonResponse({
+        status: "completed",
+        message: `sync-api PostgreSQL client ${major} repair completed.`,
+        output: result.stdout.slice(-4000),
+        ssh_command: sshCommand,
+      }, 200);
+    } else {
+      await recordEvent(user.client, user.id, localEnvId, "repair-sync-api-client", 80,
+        `sync-api PostgreSQL client repair exited with code ${result.code}`, "failed", { stdout_tail: result.stdout.slice(-500), stderr_tail: result.stderr.slice(-500), postgres_client_major: major });
+      return jsonResponse({
+        status: "failed",
+        message: `sync-api PostgreSQL client repair exited with code ${result.code}. Check the output below or run manually via SSH.`,
+        output: (result.stdout + "\n" + result.stderr).slice(-4000),
         ssh_command: sshCommand,
       }, 200);
     }
@@ -1655,6 +1734,11 @@ Deno.serve(async (req: Request) => {
       const auth = await authenticate(req);
       if (auth instanceof Response) return auth;
       return await handleRepairSsl(req, auth);
+    }
+    if (op === "repair-sync-api-client" && req.method === "POST") {
+      const auth = await authenticate(req);
+      if (auth instanceof Response) return auth;
+      return await handleRepairSyncApiPostgresClient(req, auth);
     }
     if (op === "reset-vps" && req.method === "POST") {
       const auth = await authenticate(req);
