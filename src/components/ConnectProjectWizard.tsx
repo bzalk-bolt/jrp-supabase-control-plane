@@ -10,7 +10,6 @@ import type {
   SupabaseProject,
   LocalEnvironmentBinding,
 } from '../types/api';
-import { getSyncEnvironmentName } from '../utils/syncEnvironmentName';
 
 type WizardStep = 'organization' | 'project' | 'options' | 'confirm';
 
@@ -33,7 +32,6 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
   const [selectedProject, setSelectedProject] = useState<SupabaseProject | null>(null);
 
   const [databaseMode, setDatabaseMode] = useState<'schema-only' | 'schema-and-data'>('schema-only');
-  const [remoteDbUrl, setRemoteDbUrl] = useState('');
   const [submitting, setSubmitting] = useState(false);
 
   async function loadOrgs() {
@@ -87,10 +85,9 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
         remote_organization_id: selectedOrg.id,
         remote_organization_name: selectedOrg.name,
         database_mode: databaseMode,
-        remote_db_url: remoteDbUrl.trim(),
       });
 
-      const createdEnvName = getSyncEnvironmentName(env);
+      const createdEnvName = `${env.name || env.apex_domain}-main`;
       try {
         await syncApi.createEnvironmentFor({
           name: createdEnvName,
@@ -205,8 +202,6 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
           <OptionsStep
             databaseMode={databaseMode}
             onModeChange={setDatabaseMode}
-            remoteDbUrl={remoteDbUrl}
-            onRemoteDbUrlChange={setRemoteDbUrl}
             onNext={() => setStep('confirm')}
             onBack={() => setStep('project')}
           />
@@ -218,7 +213,6 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
             projectName={selectedProject?.name || ''}
             projectRef={selectedProject?.ref || ''}
             databaseMode={databaseMode}
-            hasRemoteDbUrl={remoteDbUrl.trim().length > 0}
             envName={env.name || env.apex_domain}
             submitting={submitting}
             onConfirm={handleConfirm}
@@ -332,16 +326,12 @@ function ProjectStep({ projects, loading, orgName, onSelect, onBack }: {
   );
 }
 
-function OptionsStep({ databaseMode, onModeChange, remoteDbUrl, onRemoteDbUrlChange, onNext, onBack }: {
+function OptionsStep({ databaseMode, onModeChange, onNext, onBack }: {
   databaseMode: 'schema-only' | 'schema-and-data';
   onModeChange: (mode: 'schema-only' | 'schema-and-data') => void;
-  remoteDbUrl: string;
-  onRemoteDbUrlChange: (value: string) => void;
   onNext: () => void;
   onBack: () => void;
 }) {
-  const canContinue = remoteDbUrl.trim().length > 0;
-
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between">
@@ -398,28 +388,10 @@ function OptionsStep({ databaseMode, onModeChange, remoteDbUrl, onRemoteDbUrlCha
         </label>
       </div>
 
-      <div className="space-y-2">
-        <label htmlFor="remote-db-url" className="block text-sm font-medium text-gray-300">
-          Hosted database connection string
-        </label>
-        <input
-          id="remote-db-url"
-          type="password"
-          value={remoteDbUrl}
-          onChange={(e) => onRemoteDbUrlChange(e.target.value)}
-          placeholder="postgresql://postgres..."
-          className="w-full px-3 py-2.5 bg-gray-950 border border-gray-700 rounded-lg text-sm text-gray-200 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500"
-        />
-        <p className="text-xs text-gray-500">
-          Required for schema pulls. Schema-only mode copies definitions without row data.
-        </p>
-      </div>
-
       <div className="flex justify-end pt-2">
         <button
           onClick={onNext}
-          disabled={!canContinue}
-          className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+          className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg transition-colors"
         >
           Continue
           <ArrowRight className="w-4 h-4" />
@@ -429,12 +401,11 @@ function OptionsStep({ databaseMode, onModeChange, remoteDbUrl, onRemoteDbUrlCha
   );
 }
 
-function ConfirmStep({ orgName, projectName, projectRef, databaseMode, hasRemoteDbUrl, envName, submitting, onConfirm, onBack }: {
+function ConfirmStep({ orgName, projectName, projectRef, databaseMode, envName, submitting, onConfirm, onBack }: {
   orgName: string;
   projectName: string;
   projectRef: string;
   databaseMode: string;
-  hasRemoteDbUrl: boolean;
   envName: string;
   submitting: boolean;
   onConfirm: () => void;
@@ -472,10 +443,6 @@ function ConfirmStep({ orgName, projectName, projectRef, databaseMode, hasRemote
         <div className="flex items-center justify-between text-sm">
           <span className="text-gray-400">Import Mode</span>
           <span className="text-gray-200 font-medium capitalize">{databaseMode.replace('-', ' & ').replace('only', 'Only')}</span>
-        </div>
-        <div className="flex items-center justify-between text-sm">
-          <span className="text-gray-400">DB Connection</span>
-          <span className="text-gray-200 font-medium">{hasRemoteDbUrl ? 'Provided' : 'Missing'}</span>
         </div>
       </div>
 

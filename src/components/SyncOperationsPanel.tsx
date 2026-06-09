@@ -3,9 +3,8 @@ import {
   RefreshCw, Loader2, CheckCircle2, AlertTriangle,
   ExternalLink, ChevronDown, Play,
 } from 'lucide-react';
-import { syncApi, settingsService, localEnvironmentsService } from '../services';
+import { syncApi, settingsService } from '../services';
 import type { LocalEnvironment, LocalEnvironmentBinding, Job } from '../types/api';
-import { getSyncEnvironmentName } from '../utils/syncEnvironmentName';
 
 interface Props {
   env: LocalEnvironment;
@@ -22,11 +21,9 @@ export default function SyncOperationsPanel({ env, binding }: Props) {
   const [error, setError] = useState('');
   const [showOutput, setShowOutput] = useState(false);
   const [showConfirm, setShowConfirm] = useState(false);
-  const [sourceDbUrl, setSourceDbUrl] = useState(binding.remote_db_url || '');
-  const [hasSavedSourceDbUrl, setHasSavedSourceDbUrl] = useState(Boolean(binding.remote_db_url));
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const envName = getSyncEnvironmentName(env);
+  const envName = `${env.name || env.apex_domain}-main`;
 
   function stopPolling() {
     if (pollRef.current) {
@@ -39,11 +36,6 @@ export default function SyncOperationsPanel({ env, binding }: Props) {
     return () => stopPolling();
   }, []);
 
-  useEffect(() => {
-    setSourceDbUrl(binding.remote_db_url || '');
-    setHasSavedSourceDbUrl(Boolean(binding.remote_db_url));
-  }, [binding.remote_db_url]);
-
   async function handlePullLatest() {
     setShowConfirm(false);
     setStatus('starting');
@@ -52,11 +44,6 @@ export default function SyncOperationsPanel({ env, binding }: Props) {
     setShowOutput(false);
 
     try {
-      const dbUrl = sourceDbUrl.trim();
-      if (!dbUrl) {
-        throw new Error('Remote database connection string is required to pull schema.');
-      }
-
       // Ensure Supabase PAT is loaded into cache if not already
       if (!syncApi.getSupabaseAccessTokenCache()) {
         try {
@@ -69,43 +56,30 @@ export default function SyncOperationsPanel({ env, binding }: Props) {
         }
       }
 
-      if (dbUrl !== (binding.remote_db_url || '')) {
-        await localEnvironmentsService.updateBinding(binding.id, { remote_db_url: dbUrl });
-        setHasSavedSourceDbUrl(true);
+      // Ensure environment exists on local sync-api
+      try {
+        await syncApi.createEnvironmentFor({
+          name: envName,
+          source_env: 'production',
+          target_env: 'local',
+          source_project_ref: binding.remote_project_ref,
+          source_project_name: '',
+          source_organization_name: binding.remote_organization_name || '',
+          target_container: 'supabase-db',
+          sync_storage_buckets: true,
+        }, env.id);
+      } catch (envErr: unknown) {
+        const msg = envErr instanceof Error ? envErr.message : '';
+        if (!msg.toLowerCase().includes('already exists') && !msg.includes('409')) {
+          throw envErr;
+        }
       }
 
-      const databaseMode = binding.database_mode === 'schema-and-data' ? 'schema-and-data' : 'schema-only';
-      const res = await syncApi.startPlatformToLocalImport(
-        {
-          confirm: 'CONFIRM',
-          name: envName,
-          environment: envName,
-          database_mode: databaseMode,
-          include_storage_bucket_metadata: true,
-          include_storage_objects: false,
-          include_edge_functions: false,
-          include_auth_data: databaseMode === 'schema-and-data',
-          reset_database: true,
-          clear_branches: true,
-          create_main_branch: true,
-          source: {
-            type: 'platform',
-            env: 'cloud',
-            project_ref: binding.remote_project_ref,
-            db_url: dbUrl,
-          },
-          target: {
-            type: 'local',
-            env: 'local',
-            container: 'supabase-db',
-            reset_user: 'supabase_admin',
-            db_name: 'postgres',
-          },
-        },
-        undefined,
+      const newJob = await syncApi.resetDestination(
+        envName,
+        { confirm: 'RESET DESTINATION', reset_database: true },
         env.id,
       );
-      const newJob = res.job;
 
       setJob(newJob);
       setStatus('running');
@@ -294,24 +268,6 @@ export default function SyncOperationsPanel({ env, binding }: Props) {
             <p className="text-sm text-gray-400 mb-6">
               Any local changes that haven't been promoted will be lost.
             </p>
-            {!hasSavedSourceDbUrl && (
-              <div className="space-y-2 mb-6">
-                <label htmlFor="pull-source-db-url" className="block text-sm font-medium text-gray-300">
-                  Hosted database connection string
-                </label>
-                <input
-                  id="pull-source-db-url"
-                  type="password"
-                  value={sourceDbUrl}
-                  onChange={(e) => setSourceDbUrl(e.target.value)}
-                  placeholder="postgresql://postgres..."
-                  className="w-full px-3 py-2.5 bg-gray-950 border border-gray-700 rounded-lg text-sm text-gray-200 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-blue-500/30 focus:border-blue-500"
-                />
-                <p className="text-xs text-gray-500">
-                  This is saved for future pulls. Schema-only mode does not copy row data.
-                </p>
-              </div>
-            )}
             <div className="flex items-center justify-end gap-3">
               <button
                 onClick={() => setShowConfirm(false)}
@@ -321,8 +277,7 @@ export default function SyncOperationsPanel({ env, binding }: Props) {
               </button>
               <button
                 onClick={handlePullLatest}
-                disabled={sourceDbUrl.trim().length === 0}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg transition-colors"
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 hover:bg-blue-500 rounded-lg transition-colors"
               >
                 <Play className="w-4 h-4" />
                 Pull Latest
