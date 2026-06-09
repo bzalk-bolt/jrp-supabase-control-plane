@@ -139,8 +139,23 @@ export async function getEnvironment(name: string): Promise<Environment> {
   return data.environment;
 }
 
+export async function getEnvironmentFor(name: string, localEnvironmentId: string): Promise<Environment> {
+  const data = await request<{ environment: Environment }>(
+    `/v1/environments/${encodeURIComponent(name)}`,
+    { localEnvironmentId },
+  );
+  return data.environment;
+}
+
 export async function getEnvironmentIdentity(name: string): Promise<EnvironmentIdentity> {
   return request<EnvironmentIdentity>(`/v1/environments/${encodeURIComponent(name)}/identity`);
+}
+
+export async function getEnvironmentIdentityFor(name: string, localEnvironmentId: string): Promise<EnvironmentIdentity> {
+  return request<EnvironmentIdentity>(
+    `/v1/environments/${encodeURIComponent(name)}/identity`,
+    { localEnvironmentId },
+  );
 }
 
 export async function getDefaultEnvironmentIdentity(name: string): Promise<EnvironmentIdentity> {
@@ -161,6 +176,14 @@ export async function createEnvironment(env: EnvironmentCreateRequest): Promise<
 export async function deleteEnvironment(name: string): Promise<Environment> {
   const data = await request<{ environment: Environment }>(`/v1/environments/${encodeURIComponent(name)}`, {
     method: 'DELETE',
+  });
+  return data.environment;
+}
+
+export async function deleteEnvironmentFor(name: string, localEnvironmentId: string): Promise<Environment> {
+  const data = await request<{ environment: Environment }>(`/v1/environments/${encodeURIComponent(name)}`, {
+    method: 'DELETE',
+    localEnvironmentId,
   });
   return data.environment;
 }
@@ -238,10 +261,11 @@ export async function resetDestination(envName: string, options: ResetOptions, l
   return data.job;
 }
 
-export async function resetSource(envName: string, options: ResetOptions): Promise<Job> {
+export async function resetSource(envName: string, options: ResetOptions, localEnvironmentId?: string): Promise<Job> {
   const data = await request<{ job: Job }>(`/v1/environments/${encodeURIComponent(envName)}/reset/source`, {
     method: 'POST',
     body: JSON.stringify(options),
+    localEnvironmentId,
   });
   return data.job;
 }
@@ -322,12 +346,18 @@ export async function pollJob(jobId: string): Promise<Job> {
 
 // --- Migrations ---
 
-export async function listMigrations(envName: string): Promise<MigrationsListResponse> {
-  return request<MigrationsListResponse>(`/v1/environments/${encodeURIComponent(envName)}/migrations`);
+export async function listMigrations(envName: string, localEnvironmentId?: string): Promise<MigrationsListResponse> {
+  return request<MigrationsListResponse>(
+    `/v1/environments/${encodeURIComponent(envName)}/migrations`,
+    { localEnvironmentId },
+  );
 }
 
-export async function getMigrationDetail(envName: string, version: string): Promise<MigrationDetailResponse> {
-  return request<MigrationDetailResponse>(`/v1/environments/${encodeURIComponent(envName)}/migrations/${encodeURIComponent(version)}`);
+export async function getMigrationDetail(envName: string, version: string, localEnvironmentId?: string): Promise<MigrationDetailResponse> {
+  return request<MigrationDetailResponse>(
+    `/v1/environments/${encodeURIComponent(envName)}/migrations/${encodeURIComponent(version)}`,
+    { localEnvironmentId },
+  );
 }
 
 // --- Supabase Account Discovery ---

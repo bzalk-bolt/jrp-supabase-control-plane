@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { ScrollText, ChevronRight, Clock, AlertCircle, Loader2, CheckCircle2, Play, RefreshCw } from 'lucide-react';
 import { syncApi } from '../services';
 import type { MigrationSummary, MigrationDetail } from '../types/api';
@@ -6,6 +6,7 @@ import SqlCodeBlock from './SqlCodeBlock';
 
 interface MigrationsPanelProps {
   envName: string;
+  localEnvironmentId?: string;
   compact?: boolean;
 }
 
@@ -51,7 +52,7 @@ function StatusBadge({ status }: { status: MigrationSummary['status'] }) {
   );
 }
 
-export default function MigrationsPanel({ envName, compact = false }: MigrationsPanelProps) {
+export default function MigrationsPanel({ envName, localEnvironmentId, compact = false }: MigrationsPanelProps) {
   const [migrations, setMigrations] = useState<MigrationSummary[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -60,22 +61,22 @@ export default function MigrationsPanel({ envName, compact = false }: Migrations
   const [detailLoading, setDetailLoading] = useState(false);
   const [viewMode, setViewMode] = useState<'sql' | 'statements'>('sql');
 
-  useEffect(() => {
-    loadMigrations();
-  }, [envName]);
-
-  async function loadMigrations() {
+  const loadMigrations = useCallback(async () => {
     try {
       setLoading(true);
       setError('');
-      const res = await syncApi.listMigrations(envName);
+      const res = await syncApi.listMigrations(envName, localEnvironmentId);
       setMigrations(res.migrations);
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Failed to load migrations');
     } finally {
       setLoading(false);
     }
-  }
+  }, [envName, localEnvironmentId]);
+
+  useEffect(() => {
+    loadMigrations();
+  }, [loadMigrations]);
 
   async function handleExpand(version: string) {
     if (expandedVersion === version) {
@@ -87,7 +88,7 @@ export default function MigrationsPanel({ envName, compact = false }: Migrations
     setDetail(null);
     setDetailLoading(true);
     try {
-      const res = await syncApi.getMigrationDetail(envName, version);
+      const res = await syncApi.getMigrationDetail(envName, version, localEnvironmentId);
       setDetail(res.migration);
     } catch (e) {
       setDetail(null);
