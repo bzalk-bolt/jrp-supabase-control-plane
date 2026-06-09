@@ -223,6 +223,7 @@ export async function createBinding(input: {
   remote_organization_id?: string;
   remote_organization_name?: string;
   database_mode?: string;
+  remote_db_url?: string;
 }): Promise<LocalEnvironmentBinding> {
   const { data: { user } } = await supabase.auth.getUser();
   if (!user) throw new Error('Not authenticated');
@@ -234,6 +235,7 @@ export async function createBinding(input: {
     remote_organization_id: input.remote_organization_id ?? '',
     remote_organization_name: input.remote_organization_name ?? '',
     database_mode: input.database_mode ?? '',
+    remote_db_url: input.remote_db_url ?? '',
   };
   const { data, error } = await supabase
     .from('local_environment_bindings')

@@ -606,6 +606,7 @@ export default function Import() {
 
         {step === 'connection' && (
           <ConnectionStep
+            projectRef={selectedProject?.ref || ''}
             dbUrl={dbUrl}
             onChangeDbUrl={setDbUrl}
             skip={skipDbUrl}
@@ -1161,6 +1162,7 @@ function ProjectStep({
 }
 
 function ConnectionStep({
+  projectRef,
   dbUrl,
   onChangeDbUrl,
   skip,
@@ -1168,6 +1170,7 @@ function ConnectionStep({
   show,
   onToggleShow,
 }: {
+  projectRef: string;
   dbUrl: string;
   onChangeDbUrl: (v: string) => void;
   skip: boolean;
@@ -1175,6 +1178,9 @@ function ConnectionStep({
   show: boolean;
   onToggleShow: () => void;
 }) {
+  const exampleRef = projectRef || 'project-ref';
+  const example = `postgresql://postgres.${exampleRef}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres`;
+
   return (
     <div className="space-y-4">
       <SectionHeader
@@ -1199,7 +1205,7 @@ function ConnectionStep({
             value={dbUrl}
             onChange={(e) => onChangeDbUrl(e.target.value)}
             disabled={skip}
-            placeholder="postgresql://postgres:password@db.xxxx.supabase.co:5432/postgres"
+            placeholder={example}
             className="w-full pl-3 pr-10 py-2.5 bg-gray-950 border border-gray-800 rounded-lg text-sm text-gray-200 placeholder-gray-600 focus:outline-none focus:border-emerald-600/50 focus:ring-1 focus:ring-emerald-600/20 disabled:opacity-40 disabled:cursor-not-allowed font-mono"
           />
           <button
@@ -1211,6 +1217,11 @@ function ConnectionStep({
             {show ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
           </button>
         </div>
+        {!skip && (
+          <p className="text-xs text-gray-500 font-mono break-all">
+            Example: {example}
+          </p>
+        )}
       </div>
 
       <label className="flex items-start gap-3 cursor-pointer group">

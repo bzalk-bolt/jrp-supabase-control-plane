@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import {
   Building2, FolderOpen, Database, CheckCircle2, Loader2,
-  ArrowRight, ArrowLeft, X, Cloud, Download,
+  ArrowRight, ArrowLeft, X, Cloud, Download, Eye, EyeOff, Info,
 } from 'lucide-react';
 import { syncApi, localEnvironmentsService } from '../services';
 import type {
@@ -11,7 +11,7 @@ import type {
   LocalEnvironmentBinding,
 } from '../types/api';
 
-type WizardStep = 'organization' | 'project' | 'options' | 'confirm';
+type WizardStep = 'organization' | 'project' | 'connection' | 'options' | 'confirm';
 
 interface Props {
   env: LocalEnvironment;
@@ -32,6 +32,8 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
   const [selectedProject, setSelectedProject] = useState<SupabaseProject | null>(null);
 
   const [databaseMode, setDatabaseMode] = useState<'schema-only' | 'schema-and-data'>('schema-only');
+  const [remoteDbUrl, setRemoteDbUrl] = useState('');
+  const [showRemoteDbUrl, setShowRemoteDbUrl] = useState(false);
   const [submitting, setSubmitting] = useState(false);
 
   async function loadOrgs() {
@@ -69,7 +71,7 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
 
   function handleSelectProject(project: SupabaseProject) {
     setSelectedProject(project);
-    setStep('options');
+    setStep('connection');
   }
 
   async function handleConfirm() {
@@ -85,6 +87,7 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
         remote_organization_id: selectedOrg.id,
         remote_organization_name: selectedOrg.name,
         database_mode: databaseMode,
+        remote_db_url: remoteDbUrl.trim(),
       });
 
       const createdEnvName = `${env.name || env.apex_domain}-main`;
@@ -121,6 +124,7 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
   const steps: { key: WizardStep; label: string; icon: typeof Cloud }[] = [
     { key: 'organization', label: 'Organization', icon: Building2 },
     { key: 'project', label: 'Project', icon: FolderOpen },
+    { key: 'connection', label: 'Connection', icon: Database },
     { key: 'options', label: 'Options', icon: Database },
     { key: 'confirm', label: 'Confirm', icon: CheckCircle2 },
   ];
@@ -198,12 +202,24 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
           />
         )}
 
+        {step === 'connection' && (
+          <ConnectionStep
+            projectRef={selectedProject?.ref || ''}
+            remoteDbUrl={remoteDbUrl}
+            showRemoteDbUrl={showRemoteDbUrl}
+            onRemoteDbUrlChange={setRemoteDbUrl}
+            onToggleShow={() => setShowRemoteDbUrl(v => !v)}
+            onNext={() => setStep('options')}
+            onBack={() => setStep('project')}
+          />
+        )}
+
         {step === 'options' && (
           <OptionsStep
             databaseMode={databaseMode}
             onModeChange={setDatabaseMode}
             onNext={() => setStep('confirm')}
-            onBack={() => setStep('project')}
+            onBack={() => setStep('connection')}
           />
         )}
 
@@ -213,6 +229,7 @@ export default function ConnectProjectWizard({ env, onComplete, onCancel }: Prop
             projectName={selectedProject?.name || ''}
             projectRef={selectedProject?.ref || ''}
             databaseMode={databaseMode}
+            hasRemoteDbUrl={remoteDbUrl.trim().length > 0}
             envName={env.name || env.apex_domain}
             submitting={submitting}
             onConfirm={handleConfirm}
@@ -326,6 +343,85 @@ function ProjectStep({ projects, loading, orgName, onSelect, onBack }: {
   );
 }
 
+function ConnectionStep({
+  projectRef,
+  remoteDbUrl,
+  showRemoteDbUrl,
+  onRemoteDbUrlChange,
+  onToggleShow,
+  onNext,
+  onBack,
+}: {
+  projectRef: string;
+  remoteDbUrl: string;
+  showRemoteDbUrl: boolean;
+  onRemoteDbUrlChange: (value: string) => void;
+  onToggleShow: () => void;
+  onNext: () => void;
+  onBack: () => void;
+}) {
+  const exampleRef = projectRef || 'project-ref';
+  const example = `postgresql://postgres.${exampleRef}:[YOUR-PASSWORD]@aws-0-us-east-1.pooler.supabase.com:5432/postgres`;
+  const canContinue = remoteDbUrl.trim().length > 0;
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <p className="text-sm text-gray-300">Add the hosted database connection string:</p>
+        <button onClick={onBack} className="text-xs text-gray-500 hover:text-gray-300 flex items-center gap-1 transition-colors">
+          <ArrowLeft className="w-3 h-3" />
+          Back
+        </button>
+      </div>
+
+      <div className="bg-blue-500/10 border border-blue-500/20 rounded-lg px-4 py-3 flex items-start gap-3">
+        <Info className="w-5 h-5 text-blue-400 flex-shrink-0 mt-0.5" />
+        <div className="text-xs text-blue-200">
+          Find this in Supabase under <span className="font-medium">Connect</span> or <span className="font-medium">Project Settings - Database</span>. Use the URI format and replace the password placeholder.
+        </div>
+      </div>
+
+      <div className="space-y-2">
+        <label htmlFor="clone-remote-db-url" className="block text-sm font-medium text-gray-300">
+          Connection string
+        </label>
+        <div className="relative">
+          <input
+            id="clone-remote-db-url"
+            type={showRemoteDbUrl ? 'text' : 'password'}
+            value={remoteDbUrl}
+            onChange={(e) => onRemoteDbUrlChange(e.target.value)}
+            placeholder={example}
+            className="w-full pl-3 pr-10 py-2.5 bg-gray-950 border border-gray-700 rounded-lg text-sm text-gray-200 placeholder:text-gray-600 focus:outline-none focus:ring-2 focus:ring-emerald-500/30 focus:border-emerald-500 font-mono"
+          />
+          <button
+            type="button"
+            onClick={onToggleShow}
+            className="absolute right-2 top-1/2 -translate-y-1/2 p-1 text-gray-500 hover:text-gray-300"
+            title={showRemoteDbUrl ? 'Hide connection string' : 'Show connection string'}
+          >
+            {showRemoteDbUrl ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
+          </button>
+        </div>
+        <p className="text-xs text-gray-500 font-mono break-all">
+          Example: {example}
+        </p>
+      </div>
+
+      <div className="flex justify-end pt-2">
+        <button
+          onClick={onNext}
+          disabled={!canContinue}
+          className="inline-flex items-center gap-2 px-5 py-2.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors"
+        >
+          Continue
+          <ArrowRight className="w-4 h-4" />
+        </button>
+      </div>
+    </div>
+  );
+}
+
 function OptionsStep({ databaseMode, onModeChange, onNext, onBack }: {
   databaseMode: 'schema-only' | 'schema-and-data';
   onModeChange: (mode: 'schema-only' | 'schema-and-data') => void;
@@ -401,11 +497,12 @@ function OptionsStep({ databaseMode, onModeChange, onNext, onBack }: {
   );
 }
 
-function ConfirmStep({ orgName, projectName, projectRef, databaseMode, envName, submitting, onConfirm, onBack }: {
+function ConfirmStep({ orgName, projectName, projectRef, databaseMode, hasRemoteDbUrl, envName, submitting, onConfirm, onBack }: {
   orgName: string;
   projectName: string;
   projectRef: string;
   databaseMode: string;
+  hasRemoteDbUrl: boolean;
   envName: string;
   submitting: boolean;
   onConfirm: () => void;
@@ -443,6 +540,10 @@ function ConfirmStep({ orgName, projectName, projectRef, databaseMode, envName, 
         <div className="flex items-center justify-between text-sm">
           <span className="text-gray-400">Import Mode</span>
           <span className="text-gray-200 font-medium capitalize">{databaseMode.replace('-', ' & ').replace('only', 'Only')}</span>
+        </div>
+        <div className="flex items-center justify-between text-sm">
+          <span className="text-gray-400">DB Connection</span>
+          <span className="text-gray-200 font-medium">{hasRemoteDbUrl ? 'Provided' : 'Missing'}</span>
         </div>
       </div>
 

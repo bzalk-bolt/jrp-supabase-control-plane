@@ -806,6 +806,7 @@ export interface LocalEnvironmentBinding {
   remote_organization_id: string;
   remote_organization_name: string;
   database_mode: string;
+  remote_db_url: string;
   bound_at: string;
 }
 
